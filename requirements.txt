@@ -1,0 +1,22 @@
+# Multi-Agent System Requirements
+
+# Core LangChain and LangGraph
+langchain
+langchain-core
+langgraph
+langchain-groq
+
+# MCP Client for Coral integration
+langchain-mcp-adapters
+
+# Environment and utilities
+python-dotenv
+asyncio-mqtt
+httpx
+
+# Additional utilities
+pydantic
+typing-extensions
+
+# Logging and development
+rich
