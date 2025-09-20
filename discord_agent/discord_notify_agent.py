@@ -105,7 +105,7 @@ async def create_agent(coral_tools, discord_tool):
     model = init_chat_model(
         model=os.getenv("MODEL_NAME", "qwen/qwen3-32b"),
         model_provider=os.getenv("MODEL_PROVIDER", "groq"),
-        api_key=os.getenv("GROQ_API_KEY"),
+        api_key=os.getenv("OPENAI_API_KEY", None),
         temperature=float(os.getenv("MODEL_TEMPERATURE", "0.7")),
         max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "4000")),
         base_url=os.getenv("MODEL_BASE_URL", None)
@@ -131,7 +131,7 @@ async def main():
     CORAL_SERVER_URL = f"{base_url}?{query_string}"
     print(f"Connecting to Coral Server: {CORAL_SERVER_URL}")
 
-    timeout = float(os.getenv("TIMEOUT_MS", "300"))
+    timeout = float(os.getenv("TIMEOUT_MS", "30000"))
     client = MultiServerMCPClient(
         connections={
             "coral": {

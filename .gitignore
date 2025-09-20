@@ -3,3 +3,4 @@ test_files
 .venv
 __pycache__/
 *.pyc
+.gradio

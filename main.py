@@ -98,7 +98,7 @@ def load_config() -> Dict[str, Any]:
         "agent_id": os.getenv("CORAL_AGENT_ID", "triage_interface_agent"),
         "model_name": os.getenv("MODEL_NAME"),
         "model_provider": os.getenv("MODEL_PROVIDER"),
-        "api_key": os.getenv("GROQ_API_KEY"),
+        "api_key": os.getenv("OPENAI_API_KEY"),
         "model_temperature": float(os.getenv("MODEL_TEMPERATURE", DEFAULT_TEMPERATURE)),
         "model_token": int(os.getenv("MODEL_MAX_TOKENS", DEFAULT_MAX_TOKENS)),
         "base_url": os.getenv("BASE_URL")
