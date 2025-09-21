@@ -3,7 +3,7 @@ import asyncio
 import json
 import re
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 # LangGraph and LangChain imports
@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain.agents import AgentExecutor, create_react_agent
 from pydantic import BaseModel, Field
 
@@ -169,7 +169,7 @@ class CrisisDiscordBot(commands.Bot):
                 title="🚨 Crisis Detection System Online",
                 description="Mental health crisis monitoring is now active",
                 color=0x00FF00,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             embed.add_field(
                 name="Status", 
@@ -195,7 +195,7 @@ class CrisisDiscordBot(commands.Bot):
                 title="🚨 MENTAL HEALTH CRISIS ALERT 🚨",
                 description="**IMMEDIATE ATTENTION REQUIRED**",
                 color=0xFF0000,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             
             embed.add_field(name="Crisis Level", value=f"**{crisis_level}**", inline=True)
@@ -252,7 +252,7 @@ class CrisisDiscordBot(commands.Bot):
         embed = discord.Embed(
             title="🚨 Crisis System Status",
             color=0x00FF00 if self.is_ready else 0xFF0000,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         embed.add_field(
@@ -487,10 +487,8 @@ Final Answer: the final answer to the original input question
 **Remember:** You might save a life. Take every crisis signal seriously and use ALL available tools.
 
 Question: {input}
-Thought: {agent_scratchpad}"""
+Thought:{agent_scratchpad}"""
 
-        from langchain.prompts import PromptTemplate
-        
         prompt = PromptTemplate.from_template(template)
         
         # Create React agent
@@ -750,9 +748,10 @@ def main():
         # Show tool status
         st.markdown("**🛠️ Available Crisis Tools:**")
         if st.session_state.get('crisis_supervisor'):
-            agent = st.session_state.crisis_supervisor.crisis_agent
+            # Fixed line: access the tools through the crisis_agent
+            crisis_agent = st.session_state.crisis_supervisor.crisis_agent
             
-            for i, tool in enumerate(agent.tools, 1):
+            for i, tool in enumerate(crisis_agent.tools, 1):
                 st.markdown(f"{i}. **{tool.name}** - {tool.description}")
             
             # Discord bot status
