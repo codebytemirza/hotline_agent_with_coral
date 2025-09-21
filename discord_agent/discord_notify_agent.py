@@ -1,266 +1,184 @@
-import streamlit as st
-import asyncio
-import json
-import re
-import threading
-import time
-import logging
-from typing import Dict, Any
-from datetime import datetime, timezone
-
-# LangGraph and LangChain imports
-from langchain_openai import ChatOpenAI
-from langchain_groq import ChatGroq
-from langchain.tools import tool
-from langchain_core.prompts import PromptTemplate
-from langchain.agents import AgentExecutor, create_react_agent
-
-# Discord imports
-try:
-    import discord
-    from discord.ext import commands
-    DISCORD_AVAILABLE = True
-except ImportError:
-    DISCORD_AVAILABLE = False
-    st.error("❌ Discord.py not available. Install with: pip install discord.py")
+import urllib.parse
+from dotenv import load_dotenv
+import os, json, asyncio, traceback
+import discord
+from discord.ext import commands
+from langchain.chat_models import init_chat_model
+from langchain.prompts import ChatPromptTemplate
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.tools import BaseTool
+from typing import Optional, Type, Any
+from pydantic import BaseModel, Field
 
 
-# -------------------------------------------------------------------
-# Crisis Detector
-# -------------------------------------------------------------------
-class CrisisDetector:
-    """Advanced crisis detection with multiple keyword patterns"""
+class SendDiscordMessageInput(BaseModel):
+    message: str = Field(description="The message to send to Discord")
+    channel_id: Optional[int] = Field(default=None, description="Optional channel ID to send message to")
 
-    CRISIS_KEYWORDS = [
-        "suicide", "kill myself", "end my life", "want to die",
-        "better off dead", "not safe", "harm myself", "hurt myself",
-        "end it all", "give up", "no point living", "overdose",
-        "can't go on", "hopeless", "worthless"
-    ]
 
-    CRISIS_PHRASES = [
-        r"i.*want.*to.*die", r"i.*can't.*go.*on", r"i.*not.*safe",
-        r"i.*hurt.*myself", r"end.*my.*life", r"better.*off.*dead",
-        r"no.*point.*in.*living", r"going.*to.*kill", r"suicide.*plan"
-    ]
-
-    HOTLINES = {
-        "US": {
-            "primary": "988",
-            "name": "988 Suicide & Crisis Lifeline",
-            "text": "Text HOME to 741741 (Crisis Text Line)",
-            "chat": "suicidepreventionlifeline.org",
-            "emergency": "911"
-        },
-        "UK": {
-            "primary": "116 123",
-            "name": "Samaritans",
-            "text": "Text SHOUT to 85258",
-            "chat": "samaritans.org",
-            "emergency": "999"
-        },
-        "CA": {
-            "primary": "1-833-456-4566",
-            "name": "Talk Suicide Canada",
-            "text": "Text 45645",
-            "chat": "talksuicide.ca",
-            "emergency": "911"
-        },
-        "AU": {
-            "primary": "13 11 14",
-            "name": "Lifeline Australia",
-            "text": "Text 0477 13 11 14",
-            "chat": "lifeline.org.au",
-            "emergency": "000"
-        }
-    }
-
-    @staticmethod
-    def detect_crisis(text: str) -> Dict[str, Any]:
-        """Detect crisis indicators in text with severity levels"""
-        text_lower = text.lower().strip()
-
-        keywords_found = [kw for kw in CrisisDetector.CRISIS_KEYWORDS if kw in text_lower]
-        phrases_found = [p for p in CrisisDetector.CRISIS_PHRASES if re.search(p, text_lower)]
-
-        if keywords_found or phrases_found:
-            high_risk = any(w in text_lower for w in ["suicide", "kill myself", "not safe", "end my life"])
-            if high_risk:
-                level = "HIGH"
-            elif len(keywords_found) >= 2:
-                level = "MEDIUM"
+class SendDiscordMessageTool(BaseTool):
+    name: str = "send_discord_message"
+    description: str = "Send a message to Discord channel"
+    args_schema: Type[BaseModel] = SendDiscordMessageInput
+    
+    # Store bot instance as a class variable that can be set later
+    _bot_instance = None
+    
+    @classmethod
+    def set_bot_instance(cls, bot_instance):
+        """Set the bot instance for all instances of this tool"""
+        cls._bot_instance = bot_instance
+    
+    async def _arun(self, message: str, channel_id: Optional[int] = None) -> str:
+        try:
+            if not self._bot_instance:
+                return "Error: Discord bot not initialized"
+            
+            target_channel_id = channel_id or int(os.getenv("CHANNEL_ID"))
+            channel = self._bot_instance.get_channel(target_channel_id)
+            if channel:
+                await channel.send(message)
+                return f"Successfully sent message to Discord channel {target_channel_id}"
             else:
-                level = "LOW"
-        else:
-            level = "NONE"
-
-        return {
-            "crisis_detected": level != "NONE",
-            "crisis_level": level,
-            "keywords_found": keywords_found,
-            "phrases_found": phrases_found,
-            "immediate_danger": level == "HIGH",
-            "needs_emergency": "not safe" in text_lower or "kill myself" in text_lower
-        }
-
-    @staticmethod
-    def get_hotline_response(country: str = "US") -> str:
-        hotline = CrisisDetector.HOTLINES.get(country, CrisisDetector.HOTLINES["US"])
-        return f"""🚨 **IMMEDIATE HELP AVAILABLE 24/7** 🚨
-
-**{hotline['name']}**
-📞 **CALL: {hotline['primary']}**
-💬 **TEXT: {hotline['text']}**
-🌐 **CHAT: {hotline['chat']}**
-
-🚨 **Emergency: {hotline['emergency']}**
-"""
+                return f"Error: Could not find Discord channel {target_channel_id}"
+        except Exception as e:
+            return f"Error sending Discord message: {str(e)}"
+    
+    def _run(self, message: str, channel_id: Optional[int] = None) -> str:
+        # Sync version - not used in async context
+        return "Sync version not implemented"
 
 
-# -------------------------------------------------------------------
-# Discord Crisis Bot
-# -------------------------------------------------------------------
-class CrisisDiscordBot(commands.Bot):
-    """Discord bot for crisis alerts"""
-
-    def __init__(self, token: str, guild_id: int, crisis_channel_id: int):
+class DiscordBot(commands.Bot):
+    def __init__(self, agent_executor, coral_tools):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!crisis_", intents=intents)
-
-        self.token = token
-        self.guild_id = guild_id
-        self.crisis_channel_id = crisis_channel_id
-        self.is_ready = False
-
+        super().__init__(command_prefix="!", intents=intents)
+        self.agent_executor = agent_executor
+        self.coral_tools = coral_tools
+    
     async def on_ready(self):
-        logging.info(f"🚨 Crisis Bot logged in as {self.user}")
-        self.is_ready = True
+        print(f"Discord bot logged in as {self.user}")
+        channel_id = int(os.getenv("CHANNEL_ID"))
+        channel = self.get_channel(channel_id)
+        if channel:
+            await channel.send("🤖 Discord agent is now online and ready!")
 
 
-# Global instance
-crisis_bot_instance = None
+def get_tools_description(tools):
+    return "\n".join(
+        f"Tool: {tool.name}, Schema: {json.dumps(tool.args).replace('{', '{{').replace('}', '}}')}"
+        for tool in tools
+    )
 
+async def create_agent(coral_tools, discord_tool):
+    coral_tools_description = get_tools_description(coral_tools)
+    discord_tools_description = get_tools_description([discord_tool])
+    combined_tools = coral_tools + [discord_tool]
+    
+    prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            f"""You are a Discord agent that can send messages to Discord channels. Your task is to perform any instructions coming from other agents. 
+            Follow these steps in order:
+            1. Call wait_for_mentions from coral tools (timeoutMs: 30000) to receive mentions from other agents.
+            2. When you receive a mention, keep the thread ID and the sender ID.
+            3. Take 2 seconds to think about the content (instruction) of the message and check only from the list of your tools available for you to action.
+            4. Check the tool schema and make a plan in steps for the task you want to perform.
+            5. Only call the tools you need to perform for each step of the plan to complete the instruction in the content.
+            6. If asked to send a Discord message, use the send_discord_message tool with the appropriate message content.
+            7. Take 3 seconds and think about the content and see if you have executed the instruction to the best of your ability and the tools. Make this your response as "answer".
+            8. Use `send_message` from coral tools to send a message in the same thread ID to the sender Id you received the mention from, with content: "answer".
+            9. If any error occurs, use `send_message` to send a message in the same thread ID to the sender Id you received the mention from, with content: "error".
+            10. Always respond back to the sender agent even if you have no answer or error.
+            11. Wait for 2 seconds and repeat the process from step 1.
+            
+            Note: only send message not any error or status updates.
 
-def start_discord_bot(token: str, guild_id: int, crisis_channel_id: int):
-    """Start Discord bot in background safely"""
-    global crisis_bot_instance
+            These are the list of coral tools: {coral_tools_description}
+            These are the list of your tools: {discord_tools_description}"""
+        ),
+        ("placeholder", "{agent_scratchpad}")
+    ])
 
-    if crisis_bot_instance and not crisis_bot_instance.is_closed():
-        return crisis_bot_instance
+    model = init_chat_model(
+        model=os.getenv("MODEL_NAME", "qwen/qwen3-32b"),
+        model_provider=os.getenv("MODEL_PROVIDER", "groq"),
+        api_key=os.getenv("OPENAI_API_KEY", None),
+        temperature=float(os.getenv("MODEL_TEMPERATURE", "0.7")),
+        max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "4000")),
+        base_url=os.getenv("MODEL_BASE_URL", None)
+    )
+    
+    agent = create_tool_calling_agent(model, combined_tools, prompt)
+    return AgentExecutor(agent=agent, tools=combined_tools, verbose=True, handle_parsing_errors=True)
 
-    crisis_bot_instance = CrisisDiscordBot(token, guild_id, crisis_channel_id)
+async def main():
+    runtime = os.getenv("CORAL_ORCHESTRATION_RUNTIME", None)
+    if runtime is None:
+        load_dotenv()
 
-    def run_bot():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(crisis_bot_instance.start(token))
+    base_url = os.getenv("CORAL_SSE_URL")
+    agentID = os.getenv("CORAL_AGENT_ID", "discord_agent")  # Hardcoded fallback
 
-    threading.Thread(target=run_bot, daemon=True).start()
-    time.sleep(3)
-    return crisis_bot_instance
+    coral_params = {
+        "agentId": agentID,
+        "agentDescription": "Discord agent that can send messages to Discord channels"
+    }
 
+    query_string = urllib.parse.urlencode(coral_params)
+    CORAL_SERVER_URL = f"{base_url}?{query_string}"
+    print(f"Connecting to Coral Server: {CORAL_SERVER_URL}")
 
-# -------------------------------------------------------------------
-# Crisis Agent
-# -------------------------------------------------------------------
-class CrisisAgentWithTools:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.detector = CrisisDetector()
-        self.llm = self._get_llm()
-
-        self.discord_bot = None
-        if DISCORD_AVAILABLE and config.get("discord_token") and config.get("discord_crisis_channel"):
-            try:
-                self.discord_bot = start_discord_bot(
-                    token=config["discord_token"],
-                    guild_id=int(config.get("discord_guild_id", 0)),
-                    crisis_channel_id=int(config["discord_crisis_channel"])
-                )
-            except Exception as e:
-                logging.error(f"❌ Discord bot init failed: {e}")
-
-        self.tools = self.create_crisis_tools()
-        self.agent = self.create_crisis_agent()
-
-    def _get_llm(self):
-        if self.config["provider"] == "openai":
-            return ChatOpenAI(api_key=self.config["api_key"], model=self.config["model"], temperature=0.3)
-        elif self.config["provider"] == "groq":
-            return ChatGroq(api_key=self.config["api_key"], model=self.config["model"], temperature=0.3)
-
-    def create_crisis_tools(self):
-        @tool
-        def detect_crisis_level(user_message: str) -> str:
-            try:
-                r = self.detector.detect_crisis(user_message)
-                return f"Crisis Detected: {r['crisis_detected']}, Level: {r['crisis_level']}"
-            except Exception as e:
-                return f"❌ Detection error: {e}"
-
-        @tool
-        def provide_crisis_hotlines(country_code: str = "US") -> str:
-            try:
-                return self.detector.get_hotline_response(country_code)
-            except Exception as e:
-                return f"❌ Hotline error: {e}"
-
-        return [detect_crisis_level, provide_crisis_hotlines]
-
-    def create_crisis_agent(self):
-        template = """You are a CRISIS SPECIALIST.
-
-Tools:
-{tools}
-
-Tool names: {tool_names}
-
-Question: {input}
-Thought:{agent_scratchpad}"""
-
-        prompt = PromptTemplate.from_template(template)
-        agent = create_react_agent(self.llm, self.tools, prompt)
-        return AgentExecutor(agent=agent, tools=self.tools, verbose=True, return_intermediate_steps=True)
-
-    def process_message(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
-        try:
-            inp = {"input": f"User {user_id}: {user_message}"}
-            resp = self.agent.invoke(inp)
-            return {"output": resp["output"], "steps": resp.get("intermediate_steps", [])}
-        except Exception as e:
-            return {"error": str(e), "fallback": CrisisDetector.get_hotline_response("US")}
-
-
-# -------------------------------------------------------------------
-# Streamlit UI
-# -------------------------------------------------------------------
-def main():
-    st.set_page_config(page_title="🚨 Crisis Agent", page_icon="🚨", layout="wide")
-    st.title("🚨 Mental Health Crisis Agent with Discord Alerts")
-
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        provider = st.selectbox("LLM Provider", ["openai", "groq"])
-        api_key = st.text_input("API Key", type="password")
-        model = st.text_input("Model", "gpt-4o-mini")
-        discord_token = st.text_input("Discord Token", type="password")
-        discord_channel = st.text_input("Crisis Channel ID")
-
-    user_input = st.text_area("Enter user message:")
-    if st.button("Analyze"):
-        config = {
-            "provider": provider,
-            "api_key": api_key,
-            "model": model,
-            "discord_token": discord_token,
-            "discord_crisis_channel": discord_channel
+    timeout = float(os.getenv("TIMEOUT_MS", "30000"))
+    client = MultiServerMCPClient(
+        connections={
+            "coral": {
+                "transport": "sse",
+                "url": CORAL_SERVER_URL,
+                "timeout": timeout,
+                "sse_read_timeout": timeout,
+            }
         }
-        agent = CrisisAgentWithTools(config)
-        res = agent.process_message(user_input)
-        st.write(res)
+    )
 
+    print("Coral Server Connection Established")
+    coral_tools = await client.get_tools(server_name="coral")
+    print(f"Coral tools count: {len(coral_tools)}")
+
+    # Create Discord tool instance
+    discord_tool = SendDiscordMessageTool()
+    
+    # Create initial agent executor with the Discord tool
+    agent_executor = await create_agent(coral_tools, discord_tool)
+
+    # Initialize Discord bot
+    bot = DiscordBot(agent_executor, coral_tools)
+    
+    # Set the bot instance in the Discord tool
+    SendDiscordMessageTool.set_bot_instance(bot)
+
+    # Start Discord bot in the background
+    discord_token = os.getenv("DISCORD_BOT_TOKEN")
+    if discord_token:
+        asyncio.create_task(bot.start(discord_token))
+        print("Discord bot starting...")
+        await asyncio.sleep(3)  # Give Discord bot time to connect
+    else:
+        print("Warning: DISCORD_BOT_TOKEN not found. Discord functionality will be limited.")
+
+    # Main agent loop
+    while True:
+        try:
+            print("Starting new agent invocation")
+            await agent_executor.ainvoke({"agent_scratchpad": []})
+            print("Completed agent invocation, restarting loop")
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"Error in agent loop: {str(e)}")
+            print(traceback.format_exc())
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    main()
+    asyncio.run(main())
