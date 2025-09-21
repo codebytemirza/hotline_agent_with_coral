@@ -1,6 +1,6 @@
 # Cross-Platform Requirements for Streamlit Deployment
 # Removed Windows-specific packages: pywin32==311, pyreadline3==3.5.4, win32_setctime==1.2.0
-
+langgraph_supervisor
 # Core Web Framework
 streamlit
 fastapi==0.116.2
