@@ -357,7 +357,19 @@ class CrisisAgentWithTools:
     def create_crisis_tools(self):
         """Create crisis-specific tools including Discord"""
         
-        @tool
+        # Define Pydantic models for tool inputs
+        class CrisisDetectionInput(BaseModel):
+            user_message: str = Field(description="User message to analyze for crisis indicators")
+        
+        class HotlineInput(BaseModel):
+            country_code: str = Field(default="US", description="Country code (US, UK, CA, AU) for hotline resources")
+        
+        class DiscordAlertInput(BaseModel):
+            user_message: str = Field(description="User message that triggered the crisis alert")
+            crisis_level: str = Field(description="Crisis level (HIGH, MEDIUM, LOW)")
+            user_id: str = Field(default="streamlit_user", description="User identifier for the alert")
+        
+        @tool("detect_crisis_level", args_schema=CrisisDetectionInput)
         def detect_crisis_level(user_message: str) -> str:
             """Detect crisis indicators and severity level in user message"""
             try:
@@ -371,7 +383,7 @@ class CrisisAgentWithTools:
             except Exception as e:
                 return f"❌ Crisis detection error: {str(e)}"
         
-        @tool
+        @tool("provide_crisis_hotlines", args_schema=HotlineInput)
         def provide_crisis_hotlines(country_code: str = "US") -> str:
             """Provide immediate crisis hotline resources for the specified country"""
             try:
@@ -379,7 +391,7 @@ class CrisisAgentWithTools:
             except Exception as e:
                 return f"❌ Hotline resources error: {str(e)}"
         
-        @tool
+        @tool("send_discord_emergency_alert", args_schema=DiscordAlertInput)
         def send_discord_emergency_alert(user_message: str, crisis_level: str, user_id: str = "streamlit_user") -> str:
             """Send REAL emergency alert to Discord crisis response team"""
             try:
