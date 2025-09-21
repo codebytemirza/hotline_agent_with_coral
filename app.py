@@ -487,15 +487,24 @@ class CrisisAgentWithTools:
             }
     
     def create_crisis_tools(self):
-        """Create crisis-specific tools including Discord"""
+        """Create crisis-specific tools including Discord using proper LangChain StructuredTool"""
         
-        @tool
-        def detect_crisis_level(user_message: str) -> str:
-            """Detect crisis indicators and severity level in user message.
-            
-            Args:
-                user_message: The user's message to analyze for crisis indicators
-            """
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel, Field
+        from typing import Optional
+        
+        # Define Pydantic schemas for tool inputs
+        class CrisisDetectionInput(BaseModel):
+            user_message: str = Field(description="The user's message to analyze for crisis indicators")
+        
+        class HotlineInput(BaseModel):
+            country_code: str = Field(default="US", description="Country code (US, UK, CA, AU) for hotline resources")
+        
+        class DiscordAlertInput(BaseModel):
+            user_message: str = Field(description="User message that triggered the crisis alert")
+        
+        def detect_crisis_level_func(user_message: str) -> str:
+            """Detect crisis indicators and severity level in user message"""
             try:
                 result = self.detector.detect_crisis(user_message)
                 return f"""Crisis Analysis:
@@ -507,25 +516,15 @@ class CrisisAgentWithTools:
             except Exception as e:
                 return f"❌ Crisis detection error: {str(e)}"
         
-        @tool
-        def provide_crisis_hotlines(country_code: str = "US") -> str:
-            """Provide immediate crisis hotline resources for the specified country.
-            
-            Args:
-                country_code: Country code (US, UK, CA, AU) for hotline resources
-            """
+        def provide_crisis_hotlines_func(country_code: str = "US") -> str:
+            """Provide immediate crisis hotline resources for the specified country"""
             try:
                 return self.detector.get_hotline_response(country_code)
             except Exception as e:
                 return f"❌ Hotline resources error: {str(e)}"
         
-        @tool
-        def send_discord_emergency_alert(user_message: str) -> str:
-            """Send REAL emergency alert to Discord crisis response team using pre-initialized bot.
-            
-            Args:
-                user_message: User message that triggered the crisis alert
-            """
+        def send_discord_emergency_alert_func(user_message: str) -> str:
+            """Send REAL emergency alert to Discord crisis response team using pre-initialized bot"""
             try:
                 # HACKATHON DEMO MODE - Always show success for demo purposes
                 if user_message and ("demo" in user_message.lower() or "test" in user_message.lower() or "hackathon" in user_message.lower()):
@@ -650,7 +649,29 @@ class CrisisAgentWithTools:
 
 *Emergency backup systems activated - multiple crisis response channels engaged*"""
         
-        return [detect_crisis_level, provide_crisis_hotlines, send_discord_emergency_alert]
+        # Create StructuredTool instances with proper schemas
+        detect_crisis_tool = StructuredTool.from_function(
+            func=detect_crisis_level_func,
+            name="detect_crisis_level",
+            description="Detect crisis indicators and severity level in user message",
+            args_schema=CrisisDetectionInput
+        )
+        
+        provide_hotlines_tool = StructuredTool.from_function(
+            func=provide_crisis_hotlines_func,
+            name="provide_crisis_hotlines", 
+            description="Provide immediate crisis hotline resources for the specified country",
+            args_schema=HotlineInput
+        )
+        
+        send_discord_tool = StructuredTool.from_function(
+            func=send_discord_emergency_alert_func,
+            name="send_discord_emergency_alert",
+            description="Send REAL emergency alert to Discord crisis response team using pre-initialized bot",
+            args_schema=DiscordAlertInput
+        )
+        
+        return [detect_crisis_tool, provide_hotlines_tool, send_discord_tool]
     
     def create_crisis_agent(self):
         """Create React Agent with crisis tools"""
