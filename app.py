@@ -369,7 +369,10 @@ class CrisisAgentWithTools:
     def send_discord_alert_sync(self, user_message: str, crisis_level: str = "HIGH", user_id: str = "streamlit_user") -> dict:
         """Synchronous Discord alert sender for tools"""
         try:
+            print(f"🔍 Discord alert attempt - Bot status: {self.discord_bot is not None}, Ready: {self.discord_bot.is_ready if self.discord_bot else False}")
+            
             if not self.discord_bot:
+                print("❌ No Discord bot instance")
                 return {
                     "success": False,
                     "message": "Discord bot not configured",
@@ -377,42 +380,72 @@ class CrisisAgentWithTools:
                 }
             
             if not self.discord_bot.is_ready:
+                print("❌ Discord bot not ready")
                 return {
                     "success": False,
                     "message": "Discord bot not ready - connecting...",
                     "alert_type": "retry_needed"
                 }
             
+            print(f"✅ Attempting to send Discord alert via bot...")
+            
             # Send real Discord alert using asyncio
             import asyncio
             import threading
+            import time
             
-            result = {"success": False, "error": None}
+            result = {"success": False, "error": None, "completed": False}
             
             def send_alert():
                 try:
+                    print("🔄 Creating async loop for Discord alert...")
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
+                    
+                    print(f"📤 Sending alert to channel {self.discord_bot.crisis_channel_id}")
                     success = loop.run_until_complete(
                         self.discord_bot.send_crisis_alert(user_message, crisis_level, user_id)
                     )
+                    
                     result["success"] = success
+                    result["completed"] = True
+                    print(f"✅ Alert sent successfully: {success}")
                     loop.close()
+                    
                 except Exception as e:
                     result["error"] = str(e)
                     result["success"] = False
+                    result["completed"] = True
+                    print(f"❌ Alert error: {str(e)}")
             
-            alert_thread = threading.Thread(target=send_alert)
+            print("🚀 Starting alert thread...")
+            alert_thread = threading.Thread(target=send_alert, daemon=True)
             alert_thread.start()
-            alert_thread.join(timeout=15)
+            
+            # Wait for completion with timeout
+            timeout = 20  # Increased timeout
+            start_time = time.time()
+            
+            while not result["completed"] and (time.time() - start_time) < timeout:
+                time.sleep(0.5)
+                print(f"⏳ Waiting for alert... ({time.time() - start_time:.1f}s)")
+            
+            if not result["completed"]:
+                print("⏰ Alert timed out")
+                return {
+                    "success": False,
+                    "message": "Alert timed out after 20 seconds",
+                    "alert_type": "timeout"
+                }
             
             return {
                 "success": result["success"],
-                "message": result.get("error", "Alert sent successfully"),
+                "message": result.get("error", "Alert completed"),
                 "alert_type": "discord_sent" if result["success"] else "discord_failed"
             }
             
         except Exception as e:
+            print(f"❌ Discord alert system error: {str(e)}")
             return {
                 "success": False,
                 "message": str(e),
@@ -774,10 +807,40 @@ def main():
                     try:
                         st.session_state.crisis_supervisor = CrisisSupervisor(config)
                         st.session_state.crisis_initialized = True
-                        st.success("🚨 Crisis Agent with Discord Tools Active!")
+                        
+                        # Show Discord status after initialization
+                        crisis_agent = st.session_state.crisis_supervisor.crisis_agent
+                        if crisis_agent.discord_bot:
+                            if crisis_agent.discord_bot.is_ready:
+                                st.success("🚨 Crisis Agent with Discord Tools Active!")
+                                st.success(f"📢 Discord Bot Ready! Channel: {crisis_agent.discord_bot.crisis_channel_id}")
+                            else:
+                                st.success("🚨 Crisis Agent Active!")
+                                st.warning("⚠️ Discord Bot Connecting... Please wait")
+                        else:
+                            st.success("🚨 Crisis Agent Active!")
+                            st.info("ℹ️ Discord not configured - Manual alerts will be used")
+                            
                         st.balloons()
                     except Exception as e:
                         st.error(f"❌ Initialization failed: {str(e)}")
+        
+        # Show current Discord status if initialized
+        if st.session_state.get('crisis_initialized'):
+            st.divider()
+            st.subheader("📊 System Status")
+            
+            crisis_agent = st.session_state.crisis_supervisor.crisis_agent
+            
+            if crisis_agent.discord_bot:
+                if crisis_agent.discord_bot.is_ready:
+                    st.success(f"✅ Discord Bot: Ready")
+                    st.info(f"📢 Channel: {crisis_agent.discord_bot.crisis_channel_id}")
+                else:
+                    st.warning("⚠️ Discord Bot: Connecting...")
+            else:
+                st.warning("⚠️ Discord: Not configured")
+                st.info("Manual crisis intervention will be used")
     
     # Main Interface
     if not st.session_state.get('crisis_initialized'):
@@ -914,12 +977,34 @@ def main():
                         st.success("✅ Agent detected crisis!")
                     if test_result.get("discord_alert_sent"):
                         st.success("📢 Agent sent real Discord alert!")
+                    elif test_result.get("discord_manual_required"):
+                        st.warning("⚠️ Discord manual intervention required!")
                     if test_result.get("hotline_provided"):
                         st.success("📞 Agent provided hotlines!")
                     
                     # Show agent's thinking process
                     if test_result.get("agent_output"):
                         st.text_area("Agent Response:", test_result["agent_output"], height=200)
+        
+            # Add direct Discord test
+            if st.button("📢 Test Discord Direct", use_container_width=True):
+                if st.session_state.get('crisis_supervisor'):
+                    crisis_agent = st.session_state.crisis_supervisor.crisis_agent
+                    
+                    with st.spinner("Testing Discord connection..."):
+                        discord_result = crisis_agent.send_discord_alert_sync(
+                            "SYSTEM TEST: Discord integration test",
+                            "TEST",
+                            "direct_test_user"
+                        )
+                        
+                        if discord_result["success"]:
+                            st.success("✅ Discord direct test successful!")
+                        else:
+                            st.error(f"❌ Discord test failed: {discord_result['message']}")
+                            st.info(f"Alert type: {discord_result['alert_type']}")
+                else:
+                    st.error("❌ Crisis agent not initialized")
         
         with col2:
             if st.button("🔄 Clear Chat", use_container_width=True):
