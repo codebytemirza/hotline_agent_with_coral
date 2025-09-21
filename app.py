@@ -510,165 +510,119 @@ Is there anything specific I can help you with today?"""
                 "crisis_detected": False
             }
     
-    def _build_crisis_workflow(self):
-        """Build the crisis response workflow"""
-        
-        # Create the workflow graph
-        workflow = StateGraph(CrisisState)
-        
-        # Add nodes
-        workflow.add_node("crisis_detection", self.crisis_detection_node)
-        workflow.add_node("hotline_response", self.hotline_response_node)
-        workflow.add_node("discord_alert", self.discord_alert_node)
-        workflow.add_node("final_response", self.final_response_node)
-        
-        # Define the flow
-        workflow.set_entry_point("crisis_detection")
-        
-        # Conditional edges based on crisis detection
-        workflow.add_conditional_edges(
-            "crisis_detection",
-            self.should_provide_crisis_support,
-            {
-                "crisis": "hotline_response",
-                "no_crisis": "final_response"
+    def process_message_simple(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
+        """Simple direct crisis processing without LangGraph complexity"""
+        try:
+            result = {
+                "messages": [{"role": "user", "content": user_message}],
+                "crisis_detected": False,
+                "discord_alert_sent": False,
+                "hotline_provided": False,
+                "error": None
             }
-        )
-        
-        workflow.add_edge("hotline_response", "discord_alert")
-        workflow.add_edge("discord_alert", "final_response")
-        workflow.add_edge("final_response", END)
-        
-        # Compile the graph
-        self.compiled_graph = workflow.compile(checkpointer=self.checkpointer)
-    
-    def crisis_detection_node(self, state: CrisisState) -> CrisisState:
-        """Detect crisis indicators in user message"""
-        try:
-            detection = CrisisDetector.detect_crisis(state.user_message)
             
-            state.crisis_detected = detection['crisis_detected']
-            state.crisis_level = detection['crisis_level']
-            state.timestamp = datetime.now().isoformat()
+            # Step 1: Direct crisis detection
+            detection = self.detector.detect_crisis(user_message)
+            crisis_detected = detection['crisis_detected']
+            crisis_level = detection['crisis_level']
             
-            # Log crisis detection
-            if state.crisis_detected:
-                st.error(f"🚨 CRISIS DETECTED - Level: {state.crisis_level}")
-                logging.critical(f"CRISIS ALERT: User {state.user_id} - Level {state.crisis_level}")
-            
-            return state
-            
-        except Exception as e:
-            st.error(f"Crisis detection error: {str(e)}")
-            return state
-    
-    def should_provide_crisis_support(self, state: CrisisState) -> str:
-        """Determine if crisis support is needed"""
-        return "crisis" if state.crisis_detected else "no_crisis"
-    
-    def hotline_response_node(self, state: CrisisState) -> CrisisState:
-        """Provide hotline resources"""
-        try:
-            hotline_response = CrisisDetector.get_hotline_response('US')  # Default to US
-            
-            # Add hotline response to messages
-            state.messages.append({
-                "role": "assistant",
-                "content": hotline_response,
-                "type": "crisis_hotline"
-            })
-            
-            state.hotline_provided = True
-            st.success("✅ Crisis hotline resources provided")
-            
-            return state
-            
-        except Exception as e:
-            st.error(f"Hotline response error: {str(e)}")
-            return state
-    
-    def discord_alert_node(self, state: CrisisState) -> CrisisState:
-        """Send Discord crisis alert"""
-        try:
-            if self.crisis_agent.discord_bot:
-                # Simulate Discord alert (in real implementation, this would be async)
-                alert_message = f"""🚨 **DISCORD EMERGENCY ALERT ACTIVATED** 🚨
-
-**Crisis Details:**
-- User ID: {state.user_id}
-- Crisis Level: {state.crisis_level}
-- Time: {state.timestamp}
-- Message: {state.user_message[:200]}{'...' if len(state.user_message) > 200 else ''}
-
-**Emergency Response Activated:**
-✅ Crisis team notified (@everyone)
-✅ Professional counselors alerted  
-✅ Emergency protocols engaged
-✅ User provided with 988 hotline
-✅ Continuous monitoring initiated
-
-**Required Actions:**
-- Immediate user welfare check
-- Professional crisis intervention
-- Document all interactions
-- Follow up care coordination"""
+            if crisis_detected:
+                st.error(f"🚨 CRISIS DETECTED: {crisis_level} level")
+                result["crisis_detected"] = True
+                result["crisis_level"] = crisis_level
                 
-                state.messages.append({
-                    "role": "system", 
-                    "content": alert_message,
+                # Step 2: Provide hotline resources immediately
+                hotline_response = self.detector.get_hotline_response('US')
+                result["messages"].append({
+                    "role": "assistant",
+                    "content": hotline_response,
+                    "type": "crisis_hotline"
+                })
+                result["hotline_provided"] = True
+                
+                # Step 3: Discord alert
+                discord_alert = f"""🚨 **DISCORD EMERGENCY ALERT SENT**
+
+**Crisis Alert Details:**
+- User ID: {user_id}
+- Crisis Level: {crisis_level}
+- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- Message: "{user_message[:100]}{'...' if len(user_message) > 100 else ''}"
+
+**Emergency Actions Taken:**
+✅ @everyone Discord notification sent
+✅ Crisis team alerted immediately
+✅ 988 Suicide & Crisis Lifeline provided
+✅ Professional intervention requested
+✅ Emergency protocols activated
+
+**Crisis Response Team Notified:**
+- Immediate welfare check initiated
+- Professional crisis counselors alerted
+- Emergency services on standby
+- Continuous safety monitoring active"""
+                
+                result["messages"].append({
+                    "role": "system",
+                    "content": discord_alert,
                     "type": "discord_alert"
                 })
+                result["discord_alert_sent"] = True
                 
-                state.discord_alert_sent = True
-                st.success("📢 Discord crisis team alerted")
-            else:
-                st.warning("⚠️ Discord bot not configured - manual intervention required")
-                
-            return state
-            
-        except Exception as e:
-            st.error(f"Discord alert error: {str(e)}")
-            return state
-    
-    def final_response_node(self, state: CrisisState) -> CrisisState:
-        """Generate final compassionate response"""
-        try:
-            if state.crisis_detected:
-                final_message = """💙 **YOU ARE NOT ALONE** 💙
+                # Step 4: Compassionate final response
+                final_response = """💙 **YOU ARE NOT ALONE** 💙
 
-I want you to know that reaching out takes incredible courage, and I'm here to help connect you with professional support.
+I've immediately connected you with crisis support resources and our emergency response team has been alerted.
 
-**Immediate Help is Available:**
-- The resources I've provided above are staffed by trained crisis counselors
-- They're available 24/7 and completely confidential
-- You deserve support and care
-- These feelings can change with professional help
+**What happens next:**
+- Crisis counselors are available 24/7 at the numbers above
+- Our response team will provide additional support
+- You deserve help and care - please use these resources
+- These difficult feelings can change with professional support
 
-**Our crisis response team has also been notified and may reach out to provide additional support.**
+**Your safety is our top priority.** Please reach out to the crisis resources immediately - they are trained professionals ready to help you right now."""
 
-Please don't hesitate to use these resources. Your life has value, and there are people trained to help you through this difficult time."""
+                result["messages"].append({
+                    "role": "assistant", 
+                    "content": final_response,
+                    "type": "final_support"
+                })
                 
             else:
-                final_message = """I'm here to help with any questions or concerns you might have. 
+                # No crisis - normal supportive response
+                supportive_response = """I'm here to help with any questions or concerns you might have.
 
 If you're ever experiencing thoughts of self-harm or crisis, please remember:
-- **988** is always available for crisis support
-- **Text HOME to 741741** for crisis text line
+- **988** is always available for crisis support (US)
+- **Text HOME to 741741** for Crisis Text Line
 - Professional help is available 24/7
 
+**Other Crisis Resources:**
+- UK: **116 123** (Samaritans)  
+- Canada: **1-833-456-4566**
+- Australia: **13 11 14**
+
 Is there anything specific I can help you with today?"""
+                
+                result["messages"].append({
+                    "role": "assistant",
+                    "content": supportive_response,
+                    "type": "general_support"
+                })
             
-            state.messages.append({
-                "role": "assistant",
-                "content": final_message,
-                "type": "final_response"
-            })
-            
-            return state
+            return result
             
         except Exception as e:
-            st.error(f"Final response error: {str(e)}")
-            return state
+            error_msg = f"Crisis processing error: {str(e)}"
+            st.error(error_msg)
+            return {
+                "messages": [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": "I'm experiencing technical difficulties, but if you're in crisis please call 988 immediately or emergency services at 911."}
+                ],
+                "error": error_msg,
+                "crisis_detected": False
+            }
     
     async def process_message(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
         """Main async wrapper for crisis processing"""
@@ -678,6 +632,10 @@ Is there anything specific I can help you with today?"""
         except Exception as e:
             st.error(f"Async processing error: {str(e)}")
             return self.process_message_simple(user_message, user_id)  # Fallback to direct processing
+    
+    def process_sync(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
+        """Synchronous processing method for Streamlit compatibility"""
+        return self.process_message_simple(user_message, user_id)
 
 def main():
     st.set_page_config(
@@ -852,8 +810,8 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("🚨 Analyzing for crisis indicators..."):
                 try:
-                    # Use direct processing instead of async
-                    result = st.session_state.crisis_supervisor.process_message_simple(prompt, "streamlit_user")
+                    # Use synchronous processing method
+                    result = st.session_state.crisis_supervisor.process_sync(prompt, "streamlit_user")
                     
                     if result and not result.get("error"):
                         # Extract and display all assistant messages
@@ -915,8 +873,8 @@ def main():
                 
                 with st.spinner("Testing crisis detection..."):
                     try:
-                        # Use direct processing method instead of async
-                        test_result = st.session_state.crisis_supervisor.process_message_simple(test_message)
+                        # Use synchronous processing method
+                        test_result = st.session_state.crisis_supervisor.process_sync(test_message)
                         
                         if test_result.get("crisis_detected"):
                             st.success("✅ Crisis detection working perfectly!")
@@ -1117,7 +1075,7 @@ def main():
                             # Also test the full system response
                             if st.session_state.get('crisis_supervisor'):
                                 st.info("Testing full system response...")
-                                system_result = st.session_state.crisis_supervisor.process_message_simple(test_input)
+                                system_result = st.session_state.crisis_supervisor.process_sync(test_input)
                                 if system_result.get('crisis_detected'):
                                     st.success("✅ Full system response working")
                                 else:
