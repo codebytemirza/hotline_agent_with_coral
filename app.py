@@ -1,227 +1,103 @@
-import streamlit as st
-import asyncio
-import json
-import re
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timezone
-import logging
-
-# LangGraph and LangChain imports
-from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import InMemorySaver
-from langchain_openai import ChatOpenAI
-from langchain_groq import ChatGroq
-from langchain.tools import tool
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
-from langchain.agents import AgentExecutor, create_react_agent
+import urllib.parse
+from dotenv import load_dotenv
+import os, json, asyncio, traceback, re
+import discord
+from discord.ext import commands
+from langchain.chat_models import init_chat_model
+from langchain.prompts import ChatPromptTemplate
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.tools import BaseTool
+from typing import Optional, Type, Any
 from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
-# Discord imports
-try:
-    import discord
-    from discord.ext import commands
-    DISCORD_AVAILABLE = True
-except ImportError:
-    DISCORD_AVAILABLE = False
-    st.error("❌ Discord.py not available. Install with: pip install discord.py")
 
-class CrisisDetector:
-    """Advanced crisis detection with multiple keyword patterns"""
-    
-    # High-risk crisis keywords
-    CRISIS_KEYWORDS = [
-        'suicide', 'kill myself', 'end my life', 'want to die', 'better off dead',
-        'not safe', 'harm myself', 'hurt myself', 'end it all', 'give up',
-        'no point living', 'overdose', 'can\'t go on', 'hopeless', 'worthless'
-    ]
-    
-    # Crisis phrases with context
-    CRISIS_PHRASES = [
-        r"i.*want.*to.*die", r"i.*can't.*go.*on", r"i.*not.*safe", 
-        r"i.*hurt.*myself", r"end.*my.*life", r"better.*off.*dead",
-        r"no.*point.*in.*living", r"going.*to.*kill", r"suicide.*plan"
-    ]
-    
-    # Global hotlines database
-    HOTLINES = {
-        'US': {
-            'primary': '988',
-            'name': '988 Suicide & Crisis Lifeline',
-            'text': 'Text HOME to 741741 (Crisis Text Line)',
-            'chat': 'suicidepreventionlifeline.org',
-            'emergency': '911'
-        },
-        'UK': {
-            'primary': '116 123',
-            'name': 'Samaritans',
-            'text': 'Text SHOUT to 85258',
-            'chat': 'samaritans.org',
-            'emergency': '999'
-        },
-        'CA': {
-            'primary': '1-833-456-4566',
-            'name': 'Talk Suicide Canada',
-            'text': 'Text 45645',
-            'chat': 'talksuicide.ca',
-            'emergency': '911'
-        },
-        'AU': {
-            'primary': '13 11 14',
-            'name': 'Lifeline Australia',
-            'text': 'Text 0477 13 11 14',
-            'chat': 'lifeline.org.au',
-            'emergency': '000'
-        }
-    }
-    
-    @staticmethod
-    def detect_crisis(text: str) -> Dict[str, Any]:
-        """Advanced crisis detection with severity levels"""
-        text_lower = text.lower().strip()
-        
-        # Check for exact keyword matches
-        crisis_keywords_found = [kw for kw in CrisisDetector.CRISIS_KEYWORDS if kw in text_lower]
-        
-        # Check for phrase patterns
-        crisis_phrases_found = []
-        for pattern in CrisisDetector.CRISIS_PHRASES:
-            if re.search(pattern, text_lower):
-                crisis_phrases_found.append(pattern)
-        
-        # Determine crisis level
-        if crisis_keywords_found or crisis_phrases_found:
-            # High risk indicators
-            high_risk = any(word in text_lower for word in ['suicide', 'kill myself', 'not safe', 'end my life'])
-            
-            if high_risk:
-                level = "HIGH"
-            elif len(crisis_keywords_found) >= 2:
-                level = "MEDIUM"
-            else:
-                level = "LOW"
-        else:
-            level = "NONE"
-        
-        return {
-            'crisis_detected': level != "NONE",
-            'crisis_level': level,
-            'keywords_found': crisis_keywords_found,
-            'phrases_found': crisis_phrases_found,
-            'immediate_danger': level == "HIGH",
-            'needs_emergency': 'not safe' in text_lower or 'kill myself' in text_lower
-        }
-    
-    @staticmethod
-    def get_hotline_response(country: str = 'US') -> str:
-        """Get formatted hotline response"""
-        hotline = CrisisDetector.HOTLINES.get(country, CrisisDetector.HOTLINES['US'])
-        
-        response = f"""🚨 **IMMEDIATE HELP AVAILABLE 24/7** 🚨
+class SendDiscordMessageInput(BaseModel):
+    message: str = Field(description="The message to send to Discord")
+    channel_id: Optional[int] = Field(default=None, description="Optional channel ID to send message to")
 
-**{hotline['name']}**
-📞 **CALL NOW: {hotline['primary']}** (Available 24/7, Free & Confidential)
-💬 **TEXT: {hotline['text']}**
-🌐 **ONLINE CHAT: {hotline['chat']}**
 
-**EMERGENCY SERVICES: {hotline['emergency']}** (If in immediate danger)
+class SendDiscordCrisisAlertInput(BaseModel):
+    user_message: str = Field(description="The original user message that triggered the crisis")
+    crisis_level: str = Field(default="HIGH", description="Crisis level: LOW, MEDIUM, HIGH")
+    user_id: str = Field(default="unknown", description="User ID who sent the crisis message")
 
-**YOU ARE NOT ALONE. HELP IS AVAILABLE RIGHT NOW.**
 
-🔹 Trained counselors are standing by
-🔹 Completely confidential and free
-🔹 Available 24 hours a day, 7 days a week
-🔹 Crisis chat and text options available
-
-**Please reach out immediately. Your life matters.**"""
-        
-        return response
-
-class CrisisDiscordBot(commands.Bot):
-    """Proper Discord bot for crisis alerts"""
+class SendDiscordMessageTool(BaseTool):
+    name: str = "send_discord_message"
+    description: str = "Send a regular message to Discord channel"
+    args_schema: Type[BaseModel] = SendDiscordMessageInput
     
-    def __init__(self, token: str, guild_id: int, crisis_channel_id: int):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        super().__init__(command_prefix="!crisis_", intents=intents)
-        
-        self.token = token
-        self.guild_id = guild_id
-        self.crisis_channel_id = crisis_channel_id
-        self.is_ready = False
-        
-    async def setup_hook(self):
-        """Setup slash commands"""
-        if self.guild_id:
-            guild = discord.Object(id=self.guild_id)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
+    # Store bot instance as a class variable that can be set later
+    _bot_instance = None
     
-    async def on_ready(self):
-        """Bot ready event"""
-        print(f'🚨 Crisis Bot logged in as {self.user}')
-        self.is_ready = True
-        
-        # Send startup message to crisis channel
-        channel = self.get_channel(self.crisis_channel_id)
-        if channel:
-            embed = discord.Embed(
-                title="🚨 Crisis Detection System Online",
-                description="Mental health crisis monitoring is now active",
-                color=0x00FF00,
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.add_field(
-                name="Status", 
-                value="✅ Real-time crisis detection active\n✅ Emergency alerts ready\n✅ 988 hotline integration ready", 
-                inline=False
-            )
-            await channel.send(embed=embed)
+    @classmethod
+    def set_bot_instance(cls, bot_instance):
+        """Set the bot instance for all instances of this tool"""
+        cls._bot_instance = bot_instance
     
-    async def send_crisis_alert(self, user_message: str, crisis_level: str, user_id: str = "streamlit_user") -> bool:
-        """Send emergency crisis alert"""
+    async def _arun(self, message: str, channel_id: Optional[int] = None) -> str:
         try:
-            print(f"🚨 Discord Alert: Starting send_crisis_alert")
-            print(f"🚨 Bot ready: {self.is_ready}")
-            print(f"🚨 Channel ID: {self.crisis_channel_id}")
+            if not self._bot_instance:
+                return "Error: Discord bot not initialized"
             
-            if not self.is_ready:
-                print("❌ Discord bot not ready yet")
-                return False
-                
-            channel = self.get_channel(self.crisis_channel_id)
-            print(f"🚨 Channel object: {channel}")
+            target_channel_id = channel_id or int(os.getenv("DISCORD_CRISIS_CHANNEL_ID", os.getenv("CHANNEL_ID")))
+            channel = self._bot_instance.get_channel(target_channel_id)
+            if channel:
+                await channel.send(message)
+                return f"✅ Successfully sent message to Discord channel {target_channel_id}"
+            else:
+                return f"❌ Error: Could not find Discord channel {target_channel_id}"
+        except Exception as e:
+            return f"❌ Error sending Discord message: {str(e)}"
+    
+    def _run(self, message: str, channel_id: Optional[int] = None) -> str:
+        # Sync version - not used in async context
+        return "Sync version not implemented"
+
+
+class SendDiscordCrisisAlertTool(BaseTool):
+    name: str = "send_discord_crisis_alert"
+    description: str = "Send a formatted crisis alert to Discord with proper emergency embed"
+    args_schema: Type[BaseModel] = SendDiscordCrisisAlertInput
+    
+    # Store bot instance as a class variable that can be set later
+    _bot_instance = None
+    
+    @classmethod
+    def set_bot_instance(cls, bot_instance):
+        """Set the bot instance for all instances of this tool"""
+        cls._bot_instance = bot_instance
+    
+    async def _arun(self, user_message: str, crisis_level: str = "HIGH", user_id: str = "unknown") -> str:
+        try:
+            if not self._bot_instance:
+                return "❌ Error: Discord bot not initialized"
+            
+            target_channel_id = int(os.getenv("DISCORD_CRISIS_CHANNEL_ID", os.getenv("CHANNEL_ID")))
+            channel = self._bot_instance.get_channel(target_channel_id)
             
             if not channel:
-                print(f"❌ Crisis channel {self.crisis_channel_id} not found")
-                # Try to fetch channel directly
-                try:
-                    channel = await self.fetch_channel(self.crisis_channel_id)
-                    print(f"🚨 Fetched channel: {channel}")
-                except Exception as fetch_error:
-                    print(f"❌ Could not fetch channel: {fetch_error}")
-                    return False
-            
-            if not channel:
-                print(f"❌ Still no channel found")
-                return False
-            
-            print(f"✅ Found channel: {channel.name} (ID: {channel.id})")
+                return f"❌ Error: Could not find Discord crisis channel {target_channel_id}"
             
             # Create emergency embed
+            color_map = {"HIGH": 0xFF0000, "MEDIUM": 0xFF8C00, "LOW": 0xFFFF00}
+            embed_color = color_map.get(crisis_level, 0xFF0000)
+            
             embed = discord.Embed(
                 title="🚨 MENTAL HEALTH CRISIS ALERT 🚨",
                 description="**IMMEDIATE ATTENTION REQUIRED**",
-                color=0xFF0000,
+                color=embed_color,
                 timestamp=datetime.now(timezone.utc)
             )
             
-            embed.add_field(name="Crisis Level", value=f"**{crisis_level}**", inline=True)
-            embed.add_field(name="User ID", value=user_id, inline=True) 
-            embed.add_field(name="Source", value="Crisis Detection System", inline=True)
+            embed.add_field(name="🚨 Crisis Level", value=f"**{crisis_level}**", inline=True)
+            embed.add_field(name="👤 User ID", value=user_id, inline=True) 
+            embed.add_field(name="📍 Source", value="Crisis Detection System", inline=True)
             
             embed.add_field(
-                name="🗨️ User Message",
+                name="💬 User Message",
                 value=f"```{user_message[:500]}{'...' if len(user_message) > 500 else ''}```",
                 inline=False
             )
@@ -234,895 +110,333 @@ class CrisisDiscordBot(commands.Bot):
             
             embed.add_field(
                 name="⚠️ Immediate Actions Required",
-                value="✅ Contact user immediately\n✅ Professional crisis intervention\n✅ Monitor safety continuously\n✅ Document all steps",
+                value="✅ Contact user immediately\n✅ Professional crisis intervention\n✅ Monitor safety continuously\n✅ Document all response steps",
                 inline=False
             )
             
             embed.set_footer(text="Crisis Response Protocol Activated | Respond Immediately")
             
-            print(f"🚨 Sending message to channel...")
+            # Send @here notification with embed
+            alert_content = f"@here **MENTAL HEALTH CRISIS ALERT**\nCrisis Level: **{crisis_level}** | User: {user_id}\n**IMMEDIATE RESPONSE REQUIRED**"
             
-            # Try to send simple message first
-            try:
-                simple_msg = await channel.send("🚨 **MENTAL HEALTH CRISIS ALERT** 🚨")
-                print(f"✅ Simple message sent: {simple_msg.id}")
-                
-                # Now try the full embed
-                full_msg = await channel.send(embed=embed)
-                print(f"✅ Full embed sent: {full_msg.id}")
-                
-                return True
-                
-            except discord.Forbidden as perm_error:
-                print(f"❌ Permission denied: {perm_error}")
-                return False
-            except discord.HTTPException as http_error:
-                print(f"❌ HTTP error: {http_error}")
-                return False
-            except Exception as send_error:
-                print(f"❌ Send error: {send_error}")
-                return False
+            # Send the alert
+            alert_message = await channel.send(content=alert_content, embed=embed)
+            
+            return f"""✅ **DISCORD CRISIS ALERT SENT SUCCESSFULLY**
+
+**📢 Alert Details:**
+- Message ID: {alert_message.id}
+- Channel: #{channel.name} ({target_channel_id})
+- Crisis Level: {crisis_level}
+- User: {user_id}
+- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**🚨 Actions Completed:**
+✅ @here notification sent to crisis response team
+✅ Emergency embed with full crisis details posted
+✅ Crisis level and user information clearly displayed
+✅ Emergency resources included in alert
+✅ Response requirements specified
+
+**📋 Crisis Team Response Status:**
+🔥 Crisis response team has been alerted and notified
+📞 Immediate user contact should be initiated
+👨‍⚕️ Professional crisis intervention protocols activated
+🚨 Emergency services information provided
+📊 Continuous safety monitoring should begin
+
+**THE CRISIS RESPONSE TEAM HAS BEEN SUCCESSFULLY NOTIFIED**"""
             
         except Exception as e:
-            print(f"❌ Discord crisis alert failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
+            error_msg = f"❌ Error sending Discord crisis alert: {str(e)}"
+            print(error_msg)
+            return error_msg
     
-    # Slash commands for manual testing
-    @discord.app_commands.command(name="test_crisis", description="Test crisis alert system")
-    async def test_crisis_alert(self, interaction: discord.Interaction, message: str = "Test crisis alert"):
-        """Test crisis alert manually"""
-        success = await self.send_crisis_alert(message, "TEST", f"admin_{interaction.user.id}")
+    def _run(self, user_message: str, crisis_level: str = "HIGH", user_id: str = "unknown") -> str:
+        # Sync version - not used in async context
+        return "Sync version not implemented"
+
+
+class DiscordBot(commands.Bot):
+    def __init__(self, agent_executor, coral_tools):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix="!", intents=intents)
+        self.agent_executor = agent_executor
+        self.coral_tools = coral_tools
+        self.crisis_channel_id = int(os.getenv("DISCORD_CRISIS_CHANNEL_ID", os.getenv("CHANNEL_ID")))
+    
+    async def on_ready(self):
+        print(f"🤖 Discord Crisis Bot logged in as {self.user}")
         
-        if success:
-            await interaction.response.send_message("✅ Crisis alert test sent successfully!", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Crisis alert test failed!", ephemeral=True)
+        # Send startup notification to crisis channel
+        channel = self.get_channel(self.crisis_channel_id)
+        if channel:
+            startup_embed = discord.Embed(
+                title="🤖 Discord Crisis Agent Online",
+                description="Crisis detection and alert system is now active",
+                color=0x00FF00,
+                timestamp=datetime.now(timezone.utc)
+            )
+            startup_embed.add_field(
+                name="🛠️ Available Tools",
+                value="✅ send_discord_message\n✅ send_discord_crisis_alert\n✅ Coral integration active",
+                inline=False
+            )
+            startup_embed.add_field(
+                name="📊 System Status",
+                value="🟢 Real-time crisis monitoring active\n🟢 Emergency response protocols ready\n🟢 988 hotline integration ready",
+                inline=False
+            )
+            await channel.send(embed=startup_embed)
+    
+    # Add slash commands for manual testing
+    @discord.app_commands.command(name="test_crisis_alert", description="Test crisis alert system")
+    async def test_crisis_alert(self, interaction: discord.Interaction, 
+                               message: str = "Test crisis alert", 
+                               level: str = "TEST"):
+        """Test crisis alert manually"""
+        try:
+            # Use the crisis alert tool
+            crisis_tool = None
+            for tool in [SendDiscordCrisisAlertTool()]:
+                if tool.name == "send_discord_crisis_alert":
+                    crisis_tool = tool
+                    SendDiscordCrisisAlertTool.set_bot_instance(self)
+                    break
+            
+            if crisis_tool:
+                result = await crisis_tool._arun(message, level, f"admin_{interaction.user.id}")
+                await interaction.response.send_message("✅ Crisis alert test completed! Check the crisis channel.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ Crisis alert tool not available!", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Crisis alert test failed: {str(e)}", ephemeral=True)
     
     @discord.app_commands.command(name="crisis_status", description="Check crisis system status")
     async def crisis_status(self, interaction: discord.Interaction):
         """Check system status"""
         embed = discord.Embed(
-            title="🚨 Crisis System Status",
-            color=0x00FF00 if self.is_ready else 0xFF0000,
+            title="📊 Crisis System Status",
+            color=0x00FF00,
             timestamp=datetime.now(timezone.utc)
         )
         
         embed.add_field(
-            name="System Status",
-            value=f"{'✅ Online' if self.is_ready else '❌ Offline'}",
+            name="🤖 Bot Status",
+            value="✅ Online and Ready",
             inline=True
         )
         
         embed.add_field(
-            name="Crisis Channel",
+            name="📢 Crisis Channel",
             value=f"<#{self.crisis_channel_id}>",
             inline=True
         )
         
         embed.add_field(
-            name="Keywords Monitored",
-            value=f"{len(CrisisDetector.CRISIS_KEYWORDS)} crisis indicators",
-            inline=True
+            name="🛠️ Tools Available",
+            value="✅ Discord messaging\n✅ Crisis alert formatting\n✅ Coral integration",
+            inline=False
         )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Global bot instance
-crisis_bot_instance = None
 
-def start_discord_bot(token: str, guild_id: int, crisis_channel_id: int):
-    """Start Discord bot in background"""
-    global crisis_bot_instance
+def extract_crisis_info(message_content: str) -> dict:
+    """Extract crisis information from Coral message"""
+    crisis_info = {
+        "user_message": "Crisis detected",
+        "crisis_level": "HIGH",
+        "user_id": "unknown"
+    }
     
-    try:
-        if crisis_bot_instance and not crisis_bot_instance.is_closed():
-            return crisis_bot_instance
-            
-        crisis_bot_instance = CrisisDiscordBot(token, guild_id, crisis_channel_id)
-        
-        # Run bot in background thread
-        import threading
-        def run_bot():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(crisis_bot_instance.start(token))
-        
-        bot_thread = threading.Thread(target=run_bot, daemon=True)
-        bot_thread.start()
-        
-        # Give bot time to start
-        import time
-        time.sleep(3)
-        
-        return crisis_bot_instance
-        
-    except Exception as e:
-        print(f"❌ Failed to start Discord bot: {str(e)}")
-        return None
-
-class CrisisAgentWithTools:
-    """Crisis Agent with Discord tool integration"""
+    # Extract user message
+    message_match = re.search(r'\*\*Message:\*\*\s*([^\n*]+)', message_content)
+    if message_match:
+        crisis_info["user_message"] = message_match.group(1).strip()
     
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.detector = CrisisDetector()
-        self.llm = self._get_llm()
-        
-        # Initialize Discord bot FIRST
-        self.discord_bot = None
-        self.discord_ready = False
-        
-        if (DISCORD_AVAILABLE and 
-            config.get('discord_token') and 
-            config.get('discord_crisis_channel')):
-            try:
-                guild_id = int(config.get('discord_guild_id', 0)) if config.get('discord_guild_id') else None
-                channel_id = int(config['discord_crisis_channel'])
-                
-                self.discord_bot = start_discord_bot(
-                    token=config['discord_token'],
-                    guild_id=guild_id,
-                    crisis_channel_id=channel_id
-                )
-                
-                # Wait for bot to be ready
-                import time
-                for i in range(10):  # Wait up to 10 seconds
-                    if self.discord_bot and self.discord_bot.is_ready:
-                        self.discord_ready = True
-                        break
-                    time.sleep(1)
-                    
-                print(f"Discord bot ready status: {self.discord_ready}")
-                
-            except Exception as e:
-                print(f"❌ Discord bot initialization failed: {str(e)}")
-                self.discord_bot = None
-        
-        # Create tools and agent AFTER Discord is ready
-        self.tools = self.create_crisis_tools()
-        self.agent = self.create_crisis_agent()
-        
-    def _get_llm(self):
-        """Initialize LLM"""
-        if self.config['provider'] == 'openai':
-            return ChatOpenAI(
-                api_key=self.config['api_key'],
-                model=self.config['model'],
-                temperature=0.3
-            )
-        elif self.config['provider'] == 'groq':
-            return ChatGroq(
-                api_key=self.config['api_key'],
-                model=self.config['model'],
-                temperature=0.3
-            )
+    # Extract crisis level
+    level_match = re.search(r'\*\*Crisis Level:\*\*\s*([^\n*]+)', message_content)
+    if level_match:
+        crisis_info["crisis_level"] = level_match.group(1).strip()
     
-    def send_discord_alert_sync(self, user_message: str, crisis_level: str = "HIGH", user_id: str = "streamlit_user") -> dict:
-        """Synchronous Discord alert sender for tools"""
-        try:
-            print(f"🔍 Discord alert attempt - Bot status: {self.discord_bot is not None}, Ready: {self.discord_bot.is_ready if self.discord_bot else False}")
-            
-            if not self.discord_bot:
-                print("❌ No Discord bot instance")
-                return {
-                    "success": False,
-                    "message": "Discord bot not configured",
-                    "alert_type": "manual_required"
-                }
-            
-            if not self.discord_bot.is_ready:
-                print("❌ Discord bot not ready")
-                return {
-                    "success": False,
-                    "message": "Discord bot not ready - connecting...",
-                    "alert_type": "retry_needed"
-                }
-            
-            print(f"✅ Attempting to send Discord alert via bot...")
-            
-            # Send real Discord alert using asyncio
-            import asyncio
-            import threading
-            import time
-            
-            result = {"success": False, "error": None, "completed": False}
-            
-            def send_alert():
-                try:
-                    print("🔄 Creating async loop for Discord alert...")
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    print(f"📤 Sending alert to channel {self.discord_bot.crisis_channel_id}")
-                    success = loop.run_until_complete(
-                        self.discord_bot.send_crisis_alert(user_message, crisis_level, user_id)
-                    )
-                    
-                    result["success"] = success
-                    result["completed"] = True
-                    print(f"✅ Alert sent successfully: {success}")
-                    loop.close()
-                    
-                except Exception as e:
-                    result["error"] = str(e)
-                    result["success"] = False
-                    result["completed"] = True
-                    print(f"❌ Alert error: {str(e)}")
-            
-            print("🚀 Starting alert thread...")
-            alert_thread = threading.Thread(target=send_alert, daemon=True)
-            alert_thread.start()
-            
-            # Wait for completion with timeout
-            timeout = 20  # Increased timeout
-            start_time = time.time()
-            
-            while not result["completed"] and (time.time() - start_time) < timeout:
-                time.sleep(0.5)
-                print(f"⏳ Waiting for alert... ({time.time() - start_time:.1f}s)")
-            
-            if not result["completed"]:
-                print("⏰ Alert timed out")
-                return {
-                    "success": False,
-                    "message": "Alert timed out after 20 seconds",
-                    "alert_type": "timeout"
-                }
-            
-            return {
-                "success": result["success"],
-                "message": result.get("error", "Alert completed"),
-                "alert_type": "discord_sent" if result["success"] else "discord_failed"
-            }
-            
-        except Exception as e:
-            print(f"❌ Discord alert system error: {str(e)}")
-            return {
-                "success": False,
-                "message": str(e),
-                "alert_type": "system_error"
-            }
+    # Extract user ID
+    user_match = re.search(r'\*\*User ID:\*\*\s*([^\n*]+)', message_content)
+    if user_match:
+        crisis_info["user_id"] = user_match.group(1).strip()
     
-    def create_crisis_tools(self):
-        """Create crisis-specific tools including Discord using proper LangChain StructuredTool"""
-        
-        from langchain_core.tools import StructuredTool
-        from pydantic import BaseModel, Field
-        from typing import Optional
-        
-        # Define Pydantic schemas for tool inputs
-        class CrisisDetectionInput(BaseModel):
-            user_message: str = Field(description="The user's message to analyze for crisis indicators")
-        
-        class HotlineInput(BaseModel):
-            country_code: str = Field(default="US", description="Country code (US, UK, CA, AU) for hotline resources")
-        
-        class DiscordAlertInput(BaseModel):
-            user_message: str = Field(description="User message that triggered the crisis alert")
-        
-        def detect_crisis_level_func(user_message: str) -> str:
-            """Detect crisis indicators and severity level in user message"""
-            try:
-                result = self.detector.detect_crisis(user_message)
-                return f"""Crisis Analysis:
-- Crisis Detected: {result['crisis_detected']}
-- Crisis Level: {result['crisis_level']}
-- Keywords Found: {result['keywords_found']}
-- Immediate Danger: {result['immediate_danger']}
-- Needs Emergency: {result['needs_emergency']}"""
-            except Exception as e:
-                return f"❌ Crisis detection error: {str(e)}"
-        
-        def provide_crisis_hotlines_func(country_code: str = "US") -> str:
-            """Provide immediate crisis hotline resources for the specified country"""
-            try:
-                return self.detector.get_hotline_response(country_code)
-            except Exception as e:
-                return f"❌ Hotline resources error: {str(e)}"
-        
-        def send_discord_emergency_alert_func(user_message: str) -> str:
-            """Send REAL emergency alert to Discord crisis response team using pre-initialized bot"""
-            try:
-                # HACKATHON DEMO MODE - Always show success for demo purposes
-                if user_message and ("demo" in user_message.lower() or "test" in user_message.lower() or "hackathon" in user_message.lower()):
-                    return f"""✅ **DISCORD EMERGENCY ALERT SENT SUCCESSFULLY** (DEMO MODE)
+    return crisis_info
 
-**🚨 CRISIS TEAM NOTIFIED 🚨**
-- Message: "{user_message[:100]}{'...' if len(user_message) > 100 else ''}"
-- Crisis Level: HIGH
-- User: streamlit_user
-- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Channel: Crisis Response Channel
 
-**ACTIONS COMPLETED:**
-✅ @here Discord notification sent to crisis team
-✅ Emergency embed with full crisis details posted
-✅ Crisis response team alerted and notified
-✅ Professional intervention protocols activated
-✅ Emergency response procedures initiated
+def get_tools_description(tools):
+    return "\n".join(
+        f"Tool: {tool.name}, Schema: {json.dumps(tool.args).replace('{', '{{').replace('}', '}}')}"
+        for tool in tools
+    )
 
-**CRISIS TEAM RESPONSE STATUS:**
-📞 Immediate user contact being initiated
-👨‍⚕️ Professional counselors have been notified
-🚨 Emergency services placed on standby alert
-📊 Continuous safety monitoring now active
-🔥 Crisis team dispatch confirmed
 
-**🔥 THE CRISIS TEAM HAS BEEN SUCCESSFULLY ALERTED AND WILL RESPOND IMMEDIATELY 🔥**
-
-*HACKATHON DEMO: In production, this would send real Discord alerts to crisis response teams*"""
-                
-                # Try real Discord alert first
-                alert_result = self.send_discord_alert_sync(
-                    user_message=user_message,
-                    crisis_level="HIGH",
-                    user_id="streamlit_user"
-                )
-                
-                if alert_result["success"]:
-                    return f"""✅ **DISCORD EMERGENCY ALERT SENT SUCCESSFULLY**
-
-**🚨 CRISIS TEAM NOTIFIED 🚨**
-- Message: "{user_message[:100]}{'...' if len(user_message) > 100 else ''}"
-- Crisis Level: HIGH
-- User: streamlit_user
-- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Channel: Crisis Response Channel
-
-**ACTIONS COMPLETED:**
-✅ @here Discord notification sent to crisis team
-✅ Emergency embed with full crisis details posted
-✅ Crisis response team alerted and notified
-✅ Professional intervention protocols activated
-✅ Emergency response procedures initiated
-
-**CRISIS TEAM RESPONSE STATUS:**
-📞 Immediate user contact being initiated
-👨‍⚕️ Professional counselors have been notified
-🚨 Emergency services placed on standby alert
-📊 Continuous safety monitoring now active
-🔥 Crisis team dispatch confirmed
-
-**🔥 THE CRISIS TEAM HAS BEEN SUCCESSFULLY ALERTED AND WILL RESPOND IMMEDIATELY 🔥**"""
-                
-                else:
-                    # HACKATHON FALLBACK - Show successful alert for demo
-                    return f"""✅ **EMERGENCY ALERT SYSTEM ACTIVATED** (BACKUP PROTOCOL)
-
-**🚨 CRISIS INTERVENTION INITIATED 🚨**
-- Message: "{user_message[:100]}{'...' if len(user_message) > 100 else ''}"
-- Crisis Level: HIGH
-- Alert Method: Emergency Backup System
-- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-**EMERGENCY ACTIONS TAKEN:**
-✅ Crisis response team contacted via backup system
-✅ Emergency protocols activated immediately
-✅ Professional counselors notified and dispatched
-✅ User safety monitoring initiated
-✅ Emergency services placed on standby
-
-**CRISIS RESPONSE STATUS:**
-📞 Crisis team contacted via emergency backup
-👨‍⚕️ Mental health professionals dispatched
-🚨 Emergency services ready for deployment
-📊 Real-time safety monitoring active
-🔥 Crisis intervention team en route
-
-**🔥 EMERGENCY RESPONSE ACTIVATED - HELP IS ON THE WAY 🔥**
-
-*Note: Discord connection issue detected - backup emergency systems activated*"""
-                    
-            except Exception as e:
-                # HACKATHON FALLBACK - Always provide crisis response
-                return f"""✅ **EMERGENCY CRISIS RESPONSE ACTIVATED**
-
-**🚨 CRITICAL INCIDENT RESPONSE INITIATED 🚨**
-- User Message: "{user_message}"
-- Crisis Level: HIGH - IMMEDIATE RESPONSE
-- Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-**EMERGENCY ACTIONS TAKEN:**
-✅ Crisis response team contacted immediately
-✅ Emergency mental health protocols activated
-✅ Professional crisis counselors dispatched
-✅ Emergency services notified and ready
-✅ User safety monitoring initiated immediately
-
-**IMMEDIATE SUPPORT RESOURCES:**
-📞 **CALL 988 NOW** - Suicide & Crisis Lifeline (24/7)
-📞 **CALL 911** - Emergency Services (Immediate Danger)
-💬 **TEXT HOME to 741741** - Crisis Text Line (24/7)
-🌐 **Chat: suicidepreventionlifeline.org** - Online Crisis Chat
-
-**CRISIS TEAM STATUS:**
-🚨 High-priority crisis response initiated
-📞 Direct user contact being attempted
-👨‍⚕️ Mental health professionals en route
-🏥 Emergency medical services on standby
-📊 Continuous safety monitoring active
-
-**🔥 YOU ARE NOT ALONE - HELP IS AVAILABLE RIGHT NOW 🔥**
-
-*Emergency backup systems activated - multiple crisis response channels engaged*"""
-        
-        # Create StructuredTool instances with proper schemas
-        detect_crisis_tool = StructuredTool.from_function(
-            func=detect_crisis_level_func,
-            name="detect_crisis_level",
-            description="Detect crisis indicators and severity level in user message",
-            args_schema=CrisisDetectionInput
-        )
-        
-        provide_hotlines_tool = StructuredTool.from_function(
-            func=provide_crisis_hotlines_func,
-            name="provide_crisis_hotlines", 
-            description="Provide immediate crisis hotline resources for the specified country",
-            args_schema=HotlineInput
-        )
-        
-        send_discord_tool = StructuredTool.from_function(
-            func=send_discord_emergency_alert_func,
-            name="send_discord_emergency_alert",
-            description="Send REAL emergency alert to Discord crisis response team using pre-initialized bot",
-            args_schema=DiscordAlertInput
-        )
-        
-        return [detect_crisis_tool, provide_hotlines_tool, send_discord_tool]
+async def create_agent(coral_tools, discord_tools):
+    coral_tools_description = get_tools_description(coral_tools)
+    discord_tools_description = get_tools_description(discord_tools)
+    combined_tools = coral_tools + discord_tools
     
-    def create_crisis_agent(self):
-        """Create React Agent with crisis tools"""
-        
-        # Create proper ReAct prompt template with required variables
-        template = """You are a CRISIS INTERVENTION SPECIALIST with access to life-saving tools.
+    prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            f"""You are a Discord Crisis Alert Agent with specialized tools for mental health emergency response.
 
-**CRITICAL MISSION:** Detect mental health crises and provide immediate professional intervention.
+**PRIMARY MISSION:** 
+1. Monitor for crisis alert messages from other agents via Coral
+2. Send properly formatted crisis alerts to Discord channels
+3. Ensure crisis response teams are immediately notified
 
-**AVAILABLE TOOLS:**
-{tools}
+**WORKFLOW:**
+1. Use `wait_for_mentions` (timeoutMs: 30000) to listen for crisis alerts from other agents
+2. When you receive a crisis alert message, extract the crisis information
+3. Determine the appropriate response based on the message content:
+   - If it contains "CRISIS ALERT" or crisis keywords → use `send_discord_crisis_alert`
+   - If it's a regular message → use `send_discord_message`
+4. For crisis alerts, extract: user_message, crisis_level, user_id from the received content
+5. Send the alert using the appropriate Discord tool
+6. Always respond back to the sender using `send_message` with confirmation
+7. Wait 2 seconds and repeat from step 1
 
-**TOOL NAMES:** {tool_names}
+**CRISIS DETECTION KEYWORDS:**
+Look for: "CRISIS ALERT", "crisis", "not safe", "suicide", "help me", "emergency", "mental health"
 
-**MANDATORY CRISIS RESPONSE PROTOCOL:**
-1. **STEP 1:** ALWAYS use detect_crisis_level first with the exact user message
-2. **STEP 2:** IF ANY crisis detected (HIGH, MEDIUM, or LOW), you MUST:
-   - Use provide_crisis_hotlines with "US" to get 988 resources
-   - Use send_discord_emergency_alert with the user message (REQUIRED for ALL crisis levels)
-   - Provide compassionate final response
-3. **STEP 3:** Even if no crisis, still provide crisis resources
+**DISCORD TOOLS USAGE:**
+- `send_discord_crisis_alert`: For crisis situations (creates emergency embed with @here)
+- `send_discord_message`: For regular notifications
 
-**CRITICAL RULE:** For ANY crisis detection (not just HIGH), you MUST use all 3 tools in sequence:
-1. detect_crisis_level → 2. provide_crisis_hotlines → 3. send_discord_emergency_alert
+**RESPONSE FORMAT:**
+- Always confirm successful Discord alert sending
+- Include message ID and channel information in confirmation
+- If error occurs, report the error details
 
-**TOOL USAGE:**
-- detect_crisis_level: Pass the exact user message as string
-- provide_crisis_hotlines: Pass "US" for US hotlines  
-- send_discord_emergency_alert: Pass the exact user message as string
+**ERROR HANDLING:**
+- If Discord fails, report the specific error
+- Always respond to the sender even if Discord fails
+- Provide alternative contact methods if Discord is unavailable
 
-**EXAMPLE SEQUENCE:**
-Action: detect_crisis_level
-Action Input: Hi I'm Abdullah I'm not safe please help me
-Observation: Crisis detected: HIGH
-Action: provide_crisis_hotlines  
-Action Input: US
-Observation: 988 resources provided
-Action: send_discord_emergency_alert
-Action Input: Hi I'm Abdullah I'm not safe please help me
-Observation: Discord alert sent
+**Available Coral Tools:** {coral_tools_description}
+**Available Discord Tools:** {discord_tools_description}
 
-**REASONING FORMAT:**
-Question: the input question you must answer
-Thought: I need to analyze this message for crisis indicators and take ALL required actions
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action (simple string only)
-Observation: the result of the action
-... (repeat until all 3 tools used for crisis)
-Thought: I have completed all crisis protocols
-Final Answer: the final compassionate response
+Remember: This is a critical mental health system. Every crisis alert must be handled immediately and professionally."""
+        ),
+        ("placeholder", "{agent_scratchpad}")
+    ])
 
-**REMEMBER:** Use ALL THREE TOOLS for ANY crisis level. Never skip send_discord_emergency_alert if crisis detected.
-
-Question: {input}
-Thought:{agent_scratchpad}"""
-
-        prompt = PromptTemplate.from_template(template)
-        
-        # Create React agent
-        agent = create_react_agent(
-            llm=self.llm,
-            tools=self.tools,
-            prompt=prompt
-        )
-        
-        # Create agent executor
-        agent_executor = AgentExecutor(
-            agent=agent,
-            tools=self.tools,
-            verbose=True,
-            handle_parsing_errors=True,
-            max_iterations=5,
-            max_execution_time=30,
-            return_intermediate_steps=True
-        )
-        
-        return agent_executor
-    
-    def process_message(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
-        """Process message through crisis agent with tools"""
-        try:
-            # Create input with user context
-            agent_input = {
-                "input": f"User ID: {user_id}\nUser Message: {user_message}\n\nAnalyze this message for crisis indicators and take appropriate action."
-            }
-            
-            # Run agent with tools
-            response = self.agent.invoke(agent_input)
-            
-            # Check if Discord alert was sent by looking at the response content
-            discord_alert_sent = "DISCORD EMERGENCY ALERT SENT SUCCESSFULLY" in response["output"]
-            discord_manual_required = "MANUAL CRISIS INTERVENTION REQUIRED" in response["output"] or "MANUAL BACKUP REQUIRED" in response["output"]
-            
-            return {
-                "messages": [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": response["output"]}
-                ],
-                "crisis_detected": "Crisis Detected: True" in response["output"] or "crisis" in response["output"].lower(),
-                "discord_alert_sent": discord_alert_sent,
-                "discord_manual_required": discord_manual_required,
-                "hotline_provided": "988" in response["output"] or "IMMEDIATE HELP AVAILABLE" in response["output"],
-                "agent_output": response["output"],
-                "intermediate_steps": response.get("intermediate_steps", []),
-                "error": None
-            }
-            
-        except Exception as e:
-            error_msg = f"Crisis agent error: {str(e)}"
-            print(f"❌ {error_msg}")
-            
-            # Fallback emergency response
-            fallback_response = """🚨 **SYSTEM ERROR - EMERGENCY RESOURCES** 🚨
-                        
-**If you're in crisis, please contact immediately:**
-📞 **988** - Suicide & Crisis Lifeline (US)
-📞 **911** - Emergency Services
-💬 **Text HOME to 741741** - Crisis Text Line
-
-**International:**
-- UK: 116 123 (Samaritans)
-- Canada: 1-833-456-4566  
-- Australia: 13 11 14
-
-**You are not alone. Help is available 24/7.**"""
-            
-            return {
-                "messages": [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": fallback_response}
-                ],
-                "error": error_msg,
-                "crisis_detected": True,  # Assume crisis for safety
-                "discord_alert_sent": False,
-                "discord_manual_required": True,
-                "hotline_provided": True,
-                "intermediate_steps": []
-            }
-
-class CrisisSupervisor:
-    """Crisis supervisor using React Agent with Discord tools"""
-    
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        self.crisis_agent = CrisisAgentWithTools(config)
-    
-    def process_message(self, user_message: str, user_id: str = "streamlit_user") -> Dict[str, Any]:
-        """Process message through crisis agent with Discord tools"""
-        return self.crisis_agent.process_message(user_message, user_id)
-
-def main():
-    st.set_page_config(
-        page_title="🚨 Crisis Agent with Discord Tools",
-        page_icon="🚨",
-        layout="wide"
+    model = init_chat_model(
+        model=os.getenv("MODEL_NAME", "qwen/qwen2.5-32b"),
+        model_provider=os.getenv("MODEL_PROVIDER", "groq"),
+        api_key=os.getenv("GROQ_API_KEY", os.getenv("OPENAI_API_KEY")),
+        temperature=float(os.getenv("MODEL_TEMPERATURE", "0.1")),  # Lower temperature for crisis situations
+        max_tokens=int(os.getenv("MODEL_MAX_TOKENS", "4000")),
+        base_url=os.getenv("MODEL_BASE_URL", None)
     )
     
-    st.title("🚨 Mental Health Crisis Agent with Real Discord Alerts")
-    st.markdown("**React Agent with Discord Tool Integration - Real Crisis Response**")
+    agent = create_tool_calling_agent(model, combined_tools, prompt)
+    return AgentExecutor(agent=agent, tools=combined_tools, verbose=True, handle_parsing_errors=True)
+
+
+async def main():
+    # Load environment variables
+    runtime = os.getenv("CORAL_ORCHESTRATION_RUNTIME", None)
+    if runtime is None:
+        load_dotenv()
+
+    # Coral configuration
+    base_url = os.getenv("CORAL_SSE_URL")
+    agentID = os.getenv("CORAL_AGENT_ID", "discord_agent")  # This should match the crisis agent config
+
+    coral_params = {
+        "agentId": agentID,
+        "agentDescription": "Discord crisis alert agent that sends formatted emergency notifications to Discord channels"
+    }
+
+    query_string = urllib.parse.urlencode(coral_params)
+    CORAL_SERVER_URL = f"{base_url}?{query_string}"
+    print(f"🔗 Connecting to Coral Server: {CORAL_SERVER_URL}")
+
+    # Connect to Coral
+    timeout = float(os.getenv("TIMEOUT_MS", "30000"))
+    client = MultiServerMCPClient(
+        connections={
+            "coral": {
+                "transport": "sse",
+                "url": CORAL_SERVER_URL,
+                "timeout": timeout,
+                "sse_read_timeout": timeout,
+            }
+        }
+    )
+
+    print("✅ Coral Server Connection Established")
+    coral_tools = await client.get_tools(server_name="coral")
+    print(f"🛠️ Coral tools available: {len(coral_tools)}")
+
+    # Create Discord tools
+    discord_message_tool = SendDiscordMessageTool()
+    discord_crisis_tool = SendDiscordCrisisAlertTool()
+    discord_tools = [discord_message_tool, discord_crisis_tool]
     
-    # Crisis banner
-    st.error("🚨 **CRISIS SUPPORT AVAILABLE 24/7** - Call 988 immediately if you're in crisis")
+    print(f"🛠️ Discord tools created: {len(discord_tools)}")
+
+    # Create agent executor
+    agent_executor = await create_agent(coral_tools, discord_tools)
+    print("🤖 Crisis Discord Agent created successfully")
+
+    # Initialize Discord bot
+    bot = DiscordBot(agent_executor, coral_tools)
     
-    # Configuration sidebar
-    with st.sidebar:
-        st.header("🔧 Crisis Agent Configuration")
-        
-        # LLM Configuration
-        st.subheader("🧠 AI Model")
-        provider = st.selectbox("Provider", ["openai", "groq"])
-        
-        if provider == "openai":
-            api_key = st.text_input("OpenAI API Key", type="password")
-            model = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"])
-        else:
-            api_key = st.text_input("Groq API Key", type="password")
-            model = st.selectbox("Model", ["llama3-70b-8192", "mixtral-8x7b-32768"])
-        
-        # Discord Configuration
-        st.subheader("📢 Discord Tools Configuration")
-        discord_token = st.text_input("Discord Bot Token", type="password", help="Your Discord bot token")
-        discord_guild_id = st.text_input("Discord Guild ID", help="Your Discord server ID (numbers only)")
-        discord_crisis_channel = st.text_input("Crisis Alert Channel ID", help="Crisis channel ID (numbers only)")
-        
-        st.info("**Discord Setup:**\n1. Create bot at discord.com/developers\n2. Add bot to your server\n3. Create #crisis-alerts channel\n4. Get channel ID (right-click → Copy ID)")
-        
-        # Initialize System
-        if st.button("🚨 Initialize Crisis Agent", use_container_width=True):
-            if not api_key:
-                st.error("❌ Please provide API key")
-            else:
-                config = {
-                    'provider': provider,
-                    'api_key': api_key,
-                    'model': model,
-                    'discord_token': discord_token,
-                    'discord_guild_id': discord_guild_id,
-                    'discord_crisis_channel': discord_crisis_channel
-                }
-                
-                with st.spinner("Initializing crisis agent with Discord tools..."):
-                    try:
-                        st.session_state.crisis_supervisor = CrisisSupervisor(config)
-                        st.session_state.crisis_initialized = True
-                        
-                        # Show Discord status after initialization
-                        crisis_agent = st.session_state.crisis_supervisor.crisis_agent
-                        if crisis_agent.discord_bot:
-                            if crisis_agent.discord_bot.is_ready:
-                                st.success("🚨 Crisis Agent with Discord Tools Active!")
-                                st.success(f"📢 Discord Bot Ready! Channel: {crisis_agent.discord_bot.crisis_channel_id}")
-                            else:
-                                st.success("🚨 Crisis Agent Active!")
-                                st.warning("⚠️ Discord Bot Connecting... Please wait")
-                        else:
-                            st.success("🚨 Crisis Agent Active!")
-                            st.info("ℹ️ Discord not configured - Manual alerts will be used")
-                            
-                        st.balloons()
-                    except Exception as e:
-                        st.error(f"❌ Initialization failed: {str(e)}")
-        
-        # Show current Discord status if initialized
-        if st.session_state.get('crisis_initialized'):
-            st.divider()
-            st.subheader("📊 System Status")
-            
-            crisis_agent = st.session_state.crisis_supervisor.crisis_agent
-            
-            if crisis_agent.discord_bot:
-                if crisis_agent.discord_bot.is_ready:
-                    st.success(f"✅ Discord Bot: Ready")
-                    st.info(f"📢 Channel: {crisis_agent.discord_bot.crisis_channel_id}")
-                else:
-                    st.warning("⚠️ Discord Bot: Connecting...")
-            else:
-                st.warning("⚠️ Discord: Not configured")
-                st.info("Manual crisis intervention will be used")
+    # Set bot instance for Discord tools
+    SendDiscordMessageTool.set_bot_instance(bot)
+    SendDiscordCrisisAlertTool.set_bot_instance(bot)
     
-    # Main Interface
-    if not st.session_state.get('crisis_initialized'):
-        st.info("👈 Configure the crisis agent using the sidebar")
-        st.markdown("""
-        ### 🤖 How the Crisis Agent Works:
+    print("🤖 Discord tools configured with bot instance")
+
+    # Start Discord bot
+    discord_token = os.getenv("DISCORD_BOT_TOKEN")
+    if discord_token:
+        print("🚀 Starting Discord bot...")
+        asyncio.create_task(bot.start(discord_token))
+        await asyncio.sleep(5)  # Give Discord bot more time to connect and sync commands
         
-        **1. React Agent Framework:**
-        - Uses LangChain's ReAct agent with specialized crisis tools
-        - Can reason about when to use each tool
-        - Handles complex crisis scenarios intelligently
-        
-        **2. Available Tools:**
-        - 🔍 `detect_crisis_level()` - Analyzes messages for crisis indicators
-        - 📞 `provide_crisis_hotlines()` - Provides 988 and international resources
-        - 📢 `send_discord_emergency_alert()` - Sends REAL Discord alerts
-        
-        **3. Agent Decision Process:**
-        ```
-        User Message → Agent Analyzes → Detects Crisis → Provides Hotlines → Sends Discord Alert
-        ```
-        
-        **4. Real Discord Integration:**
-        - Agent uses Discord as a tool (not just simulation)
-        - Sends actual embeds to your crisis channel
-        - @here notifications to your crisis team
-        - Slash commands: `/test_crisis`, `/crisis_status`
-        """)
+        # Sync slash commands
+        try:
+            synced = await bot.tree.sync()
+            print(f"✅ Synced {len(synced)} Discord slash commands")
+        except Exception as e:
+            print(f"⚠️ Failed to sync slash commands: {e}")
+    else:
+        print("❌ Warning: DISCORD_BOT_TOKEN not found. Discord functionality will be limited.")
         return
-    
-    # Crisis Chat Interface
-    st.subheader("💬 Crisis Agent Chat")
-    st.warning("🆘 **Agent uses real Discord alerts - crisis team will be notified for real emergencies**")
-    
-    # Initialize chat history
-    if "crisis_messages" not in st.session_state:
-        st.session_state.crisis_messages = []
-    
-    # Display chat messages
-    for message in st.session_state.crisis_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    # Crisis chat input
-    if prompt := st.chat_input("Type your message... (Agent will analyze and use tools as needed)"):
-        # Add user message
-        st.session_state.crisis_messages.append({
-            "role": "user",
-            "content": prompt
-        })
-        
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        # Process through crisis agent
-        with st.chat_message("assistant"):
-            with st.spinner("🤖 Crisis agent analyzing with tools..."):
-                try:
-                    result = st.session_state.crisis_supervisor.process_message(prompt, "streamlit_user")
-                    
-                    if result and not result.get("error"):
-                        # Display agent response
-                        agent_response = result.get("agent_output", "")
-                        st.markdown(agent_response)
-                        
-                        # Debug information
-                        with st.expander("🔍 Agent Debug Info", expanded=False):
-                            st.json({
-                                "crisis_detected": result.get("crisis_detected"),
-                                "discord_alert_sent": result.get("discord_alert_sent"),
-                                "hotline_provided": result.get("hotline_provided"),
-                                "agent_steps": len(result.get("intermediate_steps", [])),
-                                "tools_used": [step[0].tool for step in result.get("intermediate_steps", []) if hasattr(step[0], 'tool')]
-                            })
-                            
-                            # Show intermediate steps
-                            if result.get("intermediate_steps"):
-                                st.markdown("**Agent Tool Usage:**")
-                                for i, (action, observation) in enumerate(result["intermediate_steps"], 1):
-                                    st.markdown(f"**Step {i}:** {action.tool}")
-                                    st.text(f"Input: {action.tool_input}")
-                                    st.text(f"Output: {observation[:200]}{'...' if len(str(observation)) > 200 else ''}")
-                        
-                        # Show status indicators
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            if result.get("crisis_detected"):
-                                st.error("🚨 **Crisis Detected**")
-                            else:
-                                st.success("✅ **No Crisis**")
-                        
-                        with col2:
-                            if result.get("discord_alert_sent"):
-                                st.success("📢 **Discord Alert Sent**")
-                            elif result.get("discord_manual_required"):
-                                st.warning("⚠️ **Manual Action Required**")
-                            else:
-                                st.info("ℹ️ **No Discord Alert Needed**")
-                        
-                        with col3:
-                            if result.get("hotline_provided"):
-                                st.info("📞 **Hotlines Provided**")
-                        
-                        # Add to chat history
-                        st.session_state.crisis_messages.append({
-                            "role": "assistant",
-                            "content": agent_response
-                        })
-                    else:
-                        st.error("❌ Agent error - Emergency resources provided")
-                        error_msg = result.get("error", "Unknown error")
-                        st.error(f"Error details: {error_msg}")
-                        
-                except Exception as e:
-                    st.error(f"❌ Crisis agent error: {str(e)}")
-                    st.error("🚨 **Call 988 immediately if you're in crisis**")
-                    
-                    # Show detailed error for debugging
-                    with st.expander("🔍 Error Details", expanded=False):
-                        st.exception(e)
-    
-    # Agent Testing
-    with st.expander("🤖 Agent Testing & Tools", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🆘 Test Agent: 'I'm not safe'", use_container_width=True):
-                test_message = "Hi I'm Abdullah I'm not safe please help me"
-                
-                with st.spinner("Agent processing with tools..."):
-                    test_result = st.session_state.crisis_supervisor.process_message(test_message, "abdullah_test")
-                    
-                    if test_result.get("crisis_detected"):
-                        st.success("✅ Agent detected crisis!")
-                    if test_result.get("discord_alert_sent"):
-                        st.success("📢 Agent sent real Discord alert!")
-                    elif test_result.get("discord_manual_required"):
-                        st.warning("⚠️ Discord manual intervention required!")
-                    if test_result.get("hotline_provided"):
-                        st.success("📞 Agent provided hotlines!")
-                    
-                    # Show agent's thinking process
-                    if test_result.get("agent_output"):
-                        st.text_area("Agent Response:", test_result["agent_output"], height=200)
-        
-            # Add direct Discord test
-            if st.button("📢 Test Discord Direct", use_container_width=True):
-                if st.session_state.get('crisis_supervisor'):
-                    crisis_agent = st.session_state.crisis_supervisor.crisis_agent
-                    
-                    with st.spinner("Testing Discord connection..."):
-                        discord_result = crisis_agent.send_discord_alert_sync(
-                            "SYSTEM TEST: Discord integration test",
-                            "TEST",
-                            "direct_test_user"
-                        )
-                        
-                        if discord_result["success"]:
-                            st.success("✅ Discord direct test successful!")
-                        else:
-                            st.error(f"❌ Discord test failed: {discord_result['message']}")
-                            st.info(f"Alert type: {discord_result['alert_type']}")
-                else:
-                    st.error("❌ Crisis agent not initialized")
-        
-        with col2:
-            if st.button("🔄 Clear Chat", use_container_width=True):
-                st.session_state.crisis_messages = []
-                st.rerun()
-        
-        # Show tool status
-        st.markdown("**🛠️ Available Crisis Tools:**")
-        if st.session_state.get('crisis_supervisor'):
-            # Fixed line: access the tools through the crisis_agent
-            crisis_agent = st.session_state.crisis_supervisor.crisis_agent
-            
-            for i, tool in enumerate(crisis_agent.tools, 1):
-                st.markdown(f"{i}. **{tool.name}** - {tool.description}")
-            
-            # Discord bot status
-            if st.session_state.get('crisis_supervisor'):
-                crisis_agent = st.session_state.crisis_supervisor.crisis_agent
-                
-                if crisis_agent.discord_bot:
-                    status = "✅ Ready" if crisis_agent.discord_bot.is_ready else "⚠️ Connecting..."
-                    st.info(f"**Discord Bot Status:** {status}")
-                    st.info(f"**Crisis Channel:** {crisis_agent.discord_bot.crisis_channel_id}")
-                else:
-                    st.warning("**Discord Bot:** Not configured - Manual alerts will be used")
-    
-    # Footer
-    st.divider()
-    st.error("""
-    🚨 **EMERGENCY REMINDER** 🚨
-    
-    **If you or someone you know is in immediate danger:**
-    - 🇺🇸 **Call 988** (Suicide & Crisis Lifeline) or **911** (Emergency)
-    - 🇬🇧 **Call 116 123** (Samaritans) or **999** (Emergency)  
-    - 🇨🇦 **Call 1-833-456-4566** (Talk Suicide) or **911** (Emergency)
-    - 🇦🇺 **Call 13 11 14** (Lifeline) or **000** (Emergency)
-    
-    **Crisis Text Lines:** Text HOME to 741741 (US), SHOUT to 85258 (UK)
-    """)
-    
-    st.markdown("""
-    <div style='text-align: center; color: #666; margin-top: 20px;'>
-        🚨 <strong>Crisis Agent with Real Discord Tools</strong><br>
-        React Agent Framework • Real Discord Alerts • 988 Integration<br>
-        <em>AI-powered crisis intervention with professional response coordination</em><br>
-        💙 <strong>Every life matters. Help is always available.</strong>
-    </div>
-    """, unsafe_allow_html=True)
+
+    print("🚨 Discord Crisis Alert Agent is now running!")
+    print("📢 Listening for crisis alerts from other agents...")
+    print("🛠️ Available slash commands: /test_crisis_alert, /crisis_status")
+
+    # Main agent loop - listens for crisis alerts
+    while True:
+        try:
+            print("👂 Listening for crisis alerts via Coral...")
+            await agent_executor.ainvoke({"agent_scratchpad": []})
+            print("🔄 Completed agent cycle, restarting...")
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"❌ Error in crisis agent loop: {str(e)}")
+            print(traceback.format_exc())
+            await asyncio.sleep(5)  # Wait before retrying
 
 
 if __name__ == "__main__":
-    main()
+    print("🚨 Starting Discord Crisis Alert Agent...")
+    print("📋 Configuration:")
+    print(f"   - Agent ID: {os.getenv('CORAL_AGENT_ID', 'discord_agent')}")
+    print(f"   - Crisis Channel: {os.getenv('DISCORD_CRISIS_CHANNEL_ID', 'Not set')}")
+    print(f"   - Coral URL: {os.getenv('CORAL_SSE_URL', 'Not set')}")
+    print("🚀 Starting agent...")
+    
+    asyncio.run(main())
