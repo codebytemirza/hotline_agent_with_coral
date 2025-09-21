@@ -412,20 +412,39 @@ class CrisisSupervisor:
                 # Step 3: Real Discord alert
                 discord_success = False
                 try:
-                    if self.crisis_agent.discord_bot:
-                        # Try to send real Discord alert
+                    global crisis_bot_instance
+                    if crisis_bot_instance and crisis_bot_instance.is_ready:
+                        # Send real Discord alert using the bot instance
                         import asyncio
+                        import threading
                         
-                        # Create new event loop if none exists
-                        try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
+                        def send_alert():
+                            try:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                success = loop.run_until_complete(
+                                    crisis_bot_instance.send_crisis_alert(user_message, detection['crisis_level'], user_id)
+                                )
+                                return success
+                            except Exception as e:
+                                print(f"Discord thread error: {str(e)}")
+                                return False
                         
-                        discord_success = loop.run_until_complete(
-                            send_discord_crisis_alert(user_message, detection['crisis_level'], user_id)
-                        )
+                        # Run in separate thread to avoid blocking
+                        alert_thread = threading.Thread(target=lambda: setattr(send_alert, 'result', send_alert()))
+                        alert_thread.start()
+                        alert_thread.join(timeout=5)  # Wait max 5 seconds
+                        
+                        discord_success = getattr(send_alert, 'result', False)
+                        
+                        if discord_success:
+                            print(f"✅ Discord crisis alert sent successfully for {user_id}")
+                        else:
+                            print(f"❌ Discord crisis alert failed for {user_id}")
+                            
+                    else:
+                        print("❌ Discord bot not ready or not available")
+                        
                 except Exception as e:
                     print(f"Discord alert error: {str(e)}")
                     discord_success = False
