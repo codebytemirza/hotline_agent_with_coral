@@ -357,21 +357,13 @@ class CrisisAgentWithTools:
     def create_crisis_tools(self):
         """Create crisis-specific tools including Discord"""
         
-        # Define Pydantic models for tool inputs
-        class CrisisDetectionInput(BaseModel):
-            user_message: str = Field(description="User message to analyze for crisis indicators")
-        
-        class HotlineInput(BaseModel):
-            country_code: str = Field(default="US", description="Country code (US, UK, CA, AU) for hotline resources")
-        
-        class DiscordAlertInput(BaseModel):
-            user_message: str = Field(description="User message that triggered the crisis alert")
-            crisis_level: str = Field(description="Crisis level (HIGH, MEDIUM, LOW)")
-            user_id: str = Field(default="streamlit_user", description="User identifier for the alert")
-        
-        @tool("detect_crisis_level", args_schema=CrisisDetectionInput)
+        @tool
         def detect_crisis_level(user_message: str) -> str:
-            """Detect crisis indicators and severity level in user message"""
+            """Detect crisis indicators and severity level in user message.
+            
+            Args:
+                user_message: The user's message to analyze for crisis indicators
+            """
             try:
                 result = self.detector.detect_crisis(user_message)
                 return f"""Crisis Analysis:
@@ -383,18 +375,45 @@ class CrisisAgentWithTools:
             except Exception as e:
                 return f"❌ Crisis detection error: {str(e)}"
         
-        @tool("provide_crisis_hotlines", args_schema=HotlineInput)
+        @tool
         def provide_crisis_hotlines(country_code: str = "US") -> str:
-            """Provide immediate crisis hotline resources for the specified country"""
+            """Provide immediate crisis hotline resources for the specified country.
+            
+            Args:
+                country_code: Country code (US, UK, CA, AU) for hotline resources
+            """
             try:
                 return self.detector.get_hotline_response(country_code)
             except Exception as e:
                 return f"❌ Hotline resources error: {str(e)}"
         
-        @tool("send_discord_emergency_alert", args_schema=DiscordAlertInput)
-        def send_discord_emergency_alert(user_message: str, crisis_level: str, user_id: str = "streamlit_user") -> str:
-            """Send REAL emergency alert to Discord crisis response team"""
+        @tool
+        def send_discord_emergency_alert(input_data: str) -> str:
+            """Send REAL emergency alert to Discord crisis response team.
+            
+            Args:
+                input_data: JSON string containing user_message, crisis_level, and user_id
+                Example: '{"user_message": "I need help", "crisis_level": "HIGH", "user_id": "user123"}'
+            """
             try:
+                # Parse input data if it's a JSON string
+                if isinstance(input_data, str):
+                    try:
+                        import json
+                        data = json.loads(input_data)
+                        user_message = data.get('user_message', '')
+                        crisis_level = data.get('crisis_level', 'UNKNOWN')
+                        user_id = data.get('user_id', 'streamlit_user')
+                    except json.JSONDecodeError:
+                        # If not JSON, treat as user_message directly
+                        user_message = input_data
+                        crisis_level = "HIGH"  # Default to high for safety
+                        user_id = "streamlit_user"
+                else:
+                    user_message = str(input_data)
+                    crisis_level = "HIGH"
+                    user_id = "streamlit_user"
+                
                 global crisis_bot_instance
                 
                 if not crisis_bot_instance:
@@ -472,12 +491,17 @@ class CrisisAgentWithTools:
 **TOOL NAMES:** {tool_names}
 
 **CRISIS RESPONSE PROTOCOL:**
-1. **ALWAYS** use detect_crisis_level first to analyze user input
+1. **ALWAYS** use detect_crisis_level first with the user's message
 2. **IF CRISIS DETECTED:** 
    - Use provide_crisis_hotlines immediately for 988/crisis resources
-   - Use send_discord_emergency_alert to notify crisis team
+   - Use send_discord_emergency_alert with the user's message to notify crisis team
    - Provide compassionate support and encourage professional help
 3. **IF NO CRISIS:** Provide supportive response with crisis resources available
+
+**TOOL USAGE EXAMPLES:**
+- detect_crisis_level: Pass the exact user message
+- provide_crisis_hotlines: Pass country code like "US", "UK", "CA", or "AU"  
+- send_discord_emergency_alert: Pass the user's message directly as a string
 
 **CRITICAL PRIORITIES:**
 🚨 HIGH: Suicide ideation, "not safe", self-harm plans → IMMEDIATE ACTION
@@ -490,7 +514,7 @@ Use this exact format for your reasoning:
 Question: the input question you must answer
 Thought: you should always think about what to do
 Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
+Action Input: the input to the action (use simple strings, not JSON)
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
