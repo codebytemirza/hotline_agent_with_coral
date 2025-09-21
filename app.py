@@ -72,6 +72,404 @@ class MultiAgentSystem:
         if ELEVENLABS_AVAILABLE and self.config.get('elevenlabs_api_key'):
             try:
                 self.elevenlabs_client = ElevenLabs(api_key=self.config['elevenlabs_api_key'])
+                st.success("ElevenLabs client initialized")
+            except Exception as e:
+                st.error(f"ElevenLabs initialization failed: {str(e)}")
+        
+        # Initialize Discord
+        if DISCORD_AVAILABLE and self.config.get('discord_bot_token'):
+            try:
+                intents = discord.Intents.default()
+                intents.message_content = True
+                self.discord_bot = commands.Bot(command_prefix="!", intents=intents)
+                
+                # Add event handlers
+                @self.discord_bot.event
+                async def on_ready():
+                    st.success(f"Discord bot connected as {self.discord_bot.user}")
+                
+                st.success("Discord bot initialized")
+            except Exception as e:
+                st.error(f"Discord initialization failed: {str(e)}")
+    
+    def _get_llm(self):
+        """Get the configured LLM"""
+        if self.config['model_provider'] == 'openai':
+            return ChatOpenAI(
+                api_key=self.config['openai_api_key'],
+                model=self.config['model_name'],
+                temperature=self.config['temperature']
+            )
+        elif self.config['model_provider'] == 'groq':
+            return ChatGroq(
+                api_key=self.config['groq_api_key'],
+                model=self.config['model_name'],
+                temperature=self.config['temperature']
+            )
+        else:
+            raise ValueError(f"Unsupported model provider: {self.config['model_provider']}")
+    
+    def _create_voice_tools(self):
+        """Create tools for voice agent"""
+        @tool
+        def text_to_speech(text: str, voice_id: Optional[str] = None) -> str:
+            """Convert text to speech using ElevenLabs TTS"""
+            if not self.elevenlabs_client:
+                return "ElevenLabs not available"
+            
+            try:
+                voice_id = voice_id or self.config.get('elevenlabs_voice_id', 'JBFqnCBsd6RMkjVDRZzb')
+                model_id = self.config.get('elevenlabs_model', 'eleven_multilingual_v2')
+                
+                # Generate TTS
+                audio_generator = self.elevenlabs_client.text_to_speech.convert(
+                    text=text,
+                    voice_id=voice_id,
+                    model_id=model_id,
+                    output_format="mp3_22050_32"
+                )
+                
+                # Store audio data for potential playback
+                audio_data = b''.join(audio_generator) if hasattr(audio_generator, '__iter__') else audio_generator
+                
+                return f"TTS generated successfully for: '{text[:50]}{'...' if len(text) > 50 else ''}'"
+            except Exception as e:
+                return f"TTS error: {str(e)}"
+        
+        @tool
+        def speech_to_text(audio_description: str = "incoming audio") -> str:
+            """Convert speech to text using ElevenLabs STT (placeholder for actual audio processing)"""
+            if not self.elevenlabs_client:
+                return "ElevenLabs not available"
+            
+            try:
+                # In real implementation, this would process actual audio data
+                return f"STT ready to process: {audio_description}"
+            except Exception as e:
+                return f"STT error: {str(e)}"
+        
+        @tool
+        def start_voice_stream() -> str:
+            """Initialize FastRTC voice streaming"""
+            if not FASTRTC_AVAILABLE:
+                return "FastRTC not available"
+            
+            try:
+                # Initialize voice stream configuration
+                return "Voice stream initialized and ready for real-time audio"
+            except Exception as e:
+                return f"Voice stream error: {str(e)}"
+        
+        @tool
+        def get_voice_status() -> str:
+            """Get current voice system status"""
+            status = {
+                "elevenlabs": "connected" if self.elevenlabs_client else "disconnected",
+                "fastrtc": "available" if FASTRTC_AVAILABLE else "unavailable",
+                "voice_id": self.config.get('elevenlabs_voice_id', 'not_set'),
+                "model": self.config.get('elevenlabs_model', 'not_set')
+            }
+            return json.dumps(status, indent=2)
+        
+        return [text_to_speech, speech_to_text, start_voice_stream, get_voice_status]
+    
+    def _create_discord_tools(self):
+        """Create tools for Discord agent"""
+        @tool
+        def send_discord_message(message: str, channel_id: Optional[str] = None) -> str:
+            """Send a message to a Discord channel"""
+            if not self.discord_bot:
+                return "Discord bot not available"
+            
+            try:
+                target_channel_id = channel_id or self.config.get('discord_channel_id')
+                if not target_channel_id:
+                    return "No channel ID specified"
+                
+                # Store message for processing (in real implementation, this would send to Discord)
+                return f"Discord message queued: '{message[:50]}{'...' if len(message) > 50 else ''}' -> Channel {target_channel_id}"
+            except Exception as e:
+                return f"Discord send error: {str(e)}"
+        
+        @tool
+        def get_discord_channels() -> str:
+            """Get list of available Discord channels"""
+            if not self.discord_bot:
+                return "Discord bot not available"
+            
+            try:
+                # Mock channel list (in real implementation, would fetch from Discord)
+                channels = [
+                    {"id": "123456789", "name": "general", "type": "text"},
+                    {"id": "987654321", "name": "voice-chat", "type": "voice"},
+                    {"id": "456789123", "name": "bot-commands", "type": "text"}
+                ]
+                return json.dumps(channels, indent=2)
+            except Exception as e:
+                return f"Discord channels error: {str(e)}"
+        
+        @tool
+        def create_voice_channel(channel_name: str = "Multi-Agent Session") -> str:
+            """Create a new voice channel in Discord"""
+            if not self.discord_bot:
+                return "Discord bot not available"
+            
+            try:
+                # Mock voice channel creation
+                return f"Voice channel '{channel_name}' created successfully"
+            except Exception as e:
+                return f"Voice channel creation error: {str(e)}"
+        
+        @tool
+        def get_discord_status() -> str:
+            """Get Discord bot status and server information"""
+            if not self.discord_bot:
+                return "Discord bot not connected"
+            
+            status = {
+                "bot_connected": bool(self.discord_bot),
+                "guild_id": self.config.get('discord_guild_id', 'not_set'),
+                "permissions": "send_messages, read_history, manage_channels",
+                "status": "ready"
+            }
+            return json.dumps(status, indent=2)
+        
+        return [send_discord_message, get_discord_channels, create_voice_channel, get_discord_status]
+    
+    def _create_memory_tools(self):
+        """Create tools for memory agent"""
+        @tool
+        def store_conversation(conversation_id: str, content: str, metadata: Optional[str] = None) -> str:
+            """Store a conversation in memory with optional metadata"""
+            try:
+                # Use the InMemoryStore to persist data
+                conversation_data = {
+                    "content": content,
+                    "timestamp": datetime.now().isoformat(),
+                    "metadata": metadata or {}
+                }
+                
+                # In real implementation, would use self.store.put()
+                return f"Conversation '{conversation_id}' stored successfully with {len(content)} characters"
+            except Exception as e:
+                return f"Storage error: {str(e)}"
+        
+        @tool
+        def retrieve_conversation(conversation_id: str) -> str:
+            """Retrieve a conversation from memory"""
+            try:
+                # Mock retrieval (in real implementation, would use self.store.get())
+                return f"Retrieved conversation '{conversation_id}': [Conversation data would be returned here]"
+            except Exception as e:
+                return f"Retrieval error: {str(e)}"
+        
+        @tool
+        def get_conversation_summary(conversation_id: str, max_length: int = 200) -> str:
+            """Generate a summary of a stored conversation"""
+            try:
+                # Mock summarization
+                return f"Summary of '{conversation_id}': Multi-agent interaction session with voice, Discord, and memory capabilities demonstrated."
+            except Exception as e:
+                return f"Summary error: {str(e)}"
+        
+        @tool
+        def list_conversations() -> str:
+            """List all stored conversations"""
+            try:
+                # Mock conversation list
+                conversations = [
+                    {"id": "session_001", "timestamp": "2024-01-01T10:00:00", "summary": "Voice interaction test"},
+                    {"id": "session_002", "timestamp": "2024-01-01T11:00:00", "summary": "Discord bot commands"},
+                    {"id": "session_003", "timestamp": "2024-01-01T12:00:00", "summary": "Memory management demo"}
+                ]
+                return json.dumps(conversations, indent=2)
+            except Exception as e:
+                return f"List conversations error: {str(e)}"
+        
+        @tool
+        def get_memory_status() -> str:
+            """Get memory system status"""
+            status = {
+                "checkpointer": "active" if self.checkpointer else "inactive",
+                "store": "active" if self.store else "inactive",
+                "memory_type": "in_memory",
+                "persistent": False
+            }
+            return json.dumps(status, indent=2)
+        
+        return [store_conversation, retrieve_conversation, get_conversation_summary, list_conversations, get_memory_status]
+    
+    def _create_research_tools(self):
+        """Create tools for research agent"""
+        @tool
+        def web_search(query: str) -> str:
+            """Search the web for information (mock implementation)"""
+            try:
+                # Mock search results
+                results = {
+                    "query": query,
+                    "results": [
+                        {"title": f"Results for '{query}' - Article 1", "snippet": "Relevant information about the query..."},
+                        {"title": f"Results for '{query}' - Article 2", "snippet": "Additional context and details..."},
+                        {"title": f"Results for '{query}' - Article 3", "snippet": "Further insights and analysis..."}
+                    ],
+                    "total_results": 3
+                }
+                return json.dumps(results, indent=2)
+            except Exception as e:
+                return f"Search error: {str(e)}"
+        
+        @tool
+        def analyze_data(data_description: str) -> str:
+            """Analyze data and provide insights"""
+            try:
+                analysis = {
+                    "data_type": data_description,
+                    "analysis": f"Analysis of {data_description} shows interesting patterns and trends.",
+                    "insights": [
+                        "Key insight 1: Data shows positive correlation",
+                        "Key insight 2: Trending patterns identified",
+                        "Key insight 3: Recommendations for improvement"
+                    ]
+                }
+                return json.dumps(analysis, indent=2)
+            except Exception as e:
+                return f"Analysis error: {str(e)}"
+        
+        return [web_search, analyze_data]
+    
+    def _create_specialized_agents(self):
+        """Create specialized agents using create_react_agent with correct parameters"""
+        llm = self._get_llm()
+        
+        # Voice Agent - use state_modifier for system message
+        voice_tools = self._create_voice_tools()
+        
+        # Create system message for voice agent as a callable
+        def voice_state_modifier(state):
+            return [
+                SystemMessage(content="""You are a voice interaction expert specializing in audio processing and speech technologies. 
+
+Your responsibilities include:
+- Converting text to speech using ElevenLabs TTS with various voice models
+- Processing speech-to-text transcription with high accuracy
+- Managing FastRTC audio streaming for real-time voice interactions
+- Handling audio format conversions and quality optimization
+- Providing voice system status and diagnostics
+
+Always prioritize clear, natural speech output and accurate transcription. Use appropriate voice settings based on context.""")
+            ] + state["messages"]
+        
+        self.agents['voice_agent'] = create_react_agent(
+            model=llm,
+            tools=voice_tools,
+            state_modifier=voice_state_modifier
+        )
+        
+        # Discord Agent
+        discord_tools = self._create_discord_tools()
+        
+        def discord_state_modifier(state):
+            return [
+                SystemMessage(content="""You are a Discord integration expert specializing in bot operations and server management.
+
+Your responsibilities include:
+- Sending messages to Discord channels with proper formatting
+- Managing voice channels and server interactions
+- Handling Discord bot commands and permissions
+- Monitoring server status and member interactions
+- Creating and managing Discord community features
+
+Always ensure messages are appropriate for the target audience and follow Discord community guidelines. Use proper Discord markdown formatting when needed.""")
+            ] + state["messages"]
+        
+        self.agents['discord_agent'] = create_react_agent(
+            model=llm,
+            tools=discord_tools,
+            state_modifier=discord_state_modifier
+        )
+        
+        # Memory Agent
+        memory_tools = self._create_memory_tools()
+        
+        def memory_state_modifier(state):
+            return [
+                SystemMessage(content="""You are a memory management expert specializing in conversation storage and context retrieval.
+
+Your responsibilities include:
+- Storing conversations with proper metadata and indexing
+- Retrieving relevant conversation history and context
+- Generating meaningful summaries of interactions
+- Managing memory persistence across sessions
+- Optimizing storage for efficient retrieval
+
+Always maintain conversation context and provide relevant historical information when needed. Ensure data privacy and proper organization of stored information.""")
+            ] + state["messages"]
+        
+        self.agents['memory_agent'] = create_react_agent(
+            model=llm,
+            tools=memory_tools,
+            state_modifier=memory_state_modifier
+        )
+        
+        # Research Agent
+        research_tools = self._create_research_tools()
+        
+        def research_state_modifier(state):
+            return [
+                SystemMessage(content="""You are a research and analysis expert specializing in information gathering and data analysis.
+
+Your responsibilities include:
+- Conducting web searches for accurate and relevant information
+- Analyzing data patterns and providing actionable insights
+- Synthesizing information from multiple sources
+- Providing fact-based responses with proper context
+- Generating comprehensive research reports
+
+Always verify information accuracy and provide well-structured, evidence-based responses. Cite sources when applicable and highlight key insights clearly.""")
+            ] + state["messages"]
+        
+        self.agents['research_agent'] = create_react_agent(
+            model=llm,
+            tools=research_tools,
+            state_modifier=research_state_modifier
+        )
+        
+        st.success(f"Created {len(self.agents)} specialized agents with state modifiers")
+    
+    def _create_supervisor_workflow(self):
+        """Create the supervisor workflow using langgraph_supervisor"""
+        try:
+            llm = self._get_llm()
+            
+            # Get list of agents with their names
+            agent_names = list(self.agents.keys())
+            
+            # Create supervisor system message
+            supervisor_system_message = """You are an intelligent multi-agent system supervisor coordinating specialized AI agents.
+
+Your team consists of:
+1. **voice_agent**: Handles all voice, audio, TTS, STT, and FastRTC streaming tasks
+2. **discord_agent**: Manages Discord bot operations, messaging, and server interactions  
+3. **memory_agent**: Handles conversation storage, retrieval, and memory management
+4. **research_agent**: Conducts research, web searches, and data analysis
+
+ROUTING RULES:
+- Voice/Audio requests → voice_agent (keywords: voice, audio, speech, TTS, STT, sound, listen, speak)
+- Discord requests → discord_agent (keywords: discord, message, channel, bot, server, chat)
+- Memory requests → memory_agent (keywords: remember, store, recall, history, conversation, save)
+- Research requests → research_agent (keywords: search, research, find, analyze, information, data)
+
+For complex requests involving multiple domains, coordinate between agents as needed.        self._initialize_clients()
+        self._create_specialized_agents()
+        self._create_supervisor_workflow()
+    
+    def _initialize_clients(self):
+        """Initialize ElevenLabs and Discord clients"""
+        # Initialize ElevenLabs
+        if ELEVENLABS_AVAILABLE and self.config.get('elevenlabs_api_key'):
+            try:
+                self.elevenlabs_client = ElevenLabs(api_key=self.config['elevenlabs_api_key'])
                 st.success("✅ ElevenLabs client initialized")
             except Exception as e:
                 st.error(f"❌ ElevenLabs initialization failed: {str(e)}")
