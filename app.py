@@ -1,4 +1,444 @@
-import streamlit as st
+def main():
+    st.set_page_config(
+        page_title="🤖 Multi-Agent LangGraph System",
+        page_icon="🤖",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    st.title("🤖 Multi-Agent LangGraph Supervisor System")
+    st.markdown("**Powered by LangGraph Supervisor with Voice, Discord, Memory & Crisis Support**")
+    
+    # Crisis alert banner
+    st.error("🚨 **Crisis Support Available 24/7** - If you're in crisis, call 988 (US) or your local emergency number")
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("🔧 System Configuration")
+        
+        # Model Configuration
+        st.subheader("🧠 AI Model Setup")
+        model_provider = st.selectbox("Provider", ["openai", "groq"], key="model_provider")
+        
+        if model_provider == "openai":
+            openai_api_key = st.text_input("OpenAI API Key", type="password", key="openai_key")
+            model_name = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"], key="openai_model")
+        else:
+            groq_api_key = st.text_input("Groq API Key", type="password", key="groq_key")
+            model_name = st.selectbox("Model", ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"], key="groq_model")
+        
+        temperature = st.slider("Temperature", 0.0, 2.0, 0.7, key="temperature")
+        
+        # ElevenLabs Configuration
+        st.subheader("🎙️ ElevenLabs Voice")
+        elevenlabs_api_key = st.text_input("ElevenLabs API Key", type="password", key="elevenlabs_key")
+        elevenlabs_voice_id = st.text_input("Voice ID", value="JBFqnCBsd6RMkjVDRZzb", key="voice_id")
+        elevenlabs_model = st.selectbox("Voice Model", ["eleven_multilingual_v2", "eleven_monolingual_v1"], key="voice_model")
+        
+        # Discord Configuration
+        st.subheader("🎮 Discord Integration")
+        discord_bot_token = st.text_input("Discord Bot Token", type="password", key="discord_token")
+        discord_guild_id = st.text_input("Guild ID", key="guild_id")
+        discord_channel_id = st.text_input("Default Channel ID", key="channel_id")
+        
+        # Crisis Support Info
+        st.subheader("🆘 Crisis Support")
+        st.info("""
+        **Crisis Hotlines:**
+        🇺🇸 **988** Suicide & Crisis Lifeline
+        🇬🇧 **116 123** Samaritans  
+        🇨🇦 **1-833-456-4566** Talk Suicide Canada
+        🇦🇺 **13 11 14** Lifeline Australia
+        """)
+        
+        # System Requirements Check
+        st.subheader("📋 System Status")
+        requirements = {
+            "FastRTC": FASTRTC_AVAILABLE,
+            "ElevenLabs": ELEVENLABS_AVAILABLE,
+            "Discord.py": DISCORD_AVAILABLE,
+            "Pydub": PYDUB_AVAILABLE
+        }
+        
+        for req, available in requirements.items():
+            status = "✅" if available else "❌"
+            color = "green" if available else "red"
+            st.markdown(f":{color}[{status} {req}]")
+        
+        # Initialize System
+        st.divider()
+        if st.button("🚀 Initialize Multi-Agent System", use_container_width=True):
+            required_key = openai_api_key if model_provider == "openai" else groq_api_key
+            
+            if not required_key:
+                st.error("❌ Please provide the required API key")
+            else:
+                config = {
+                    "model_provider": model_provider,
+                    "model_name": model_name,
+                    "temperature": temperature,
+                    "openai_api_key": openai_api_key if model_provider == "openai" else None,
+                    "groq_api_key": groq_api_key if model_provider == "groq" else None,
+                    "elevenlabs_api_key": elevenlabs_api_key,
+                    "elevenlabs_voice_id": elevenlabs_voice_id,
+                    "elevenlabs_model": elevenlabs_model,
+                    "discord_bot_token": discord_bot_token,
+                    "discord_guild_id": discord_guild_id,
+                    "discord_channel_id": discord_channel_id
+                }
+                
+                with st.spinner("Initializing multi-agent system..."):
+                    try:
+                        st.session_state.agent_system = MultiAgentSystem(config)
+                        st.session_state.initialized = True
+                        st.success("🎉 Multi-Agent System Initialized Successfully!")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"❌ Initialization failed: {str(e)}")
+    
+    # Main interface
+    if not st.session_state.get('initialized', False):
+        # Welcome screen
+        st.info("👈 Configure your API keys and initialize the system using the sidebar")
+        
+        # Feature showcase
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            ### 🎙️ Voice Agent Features
+            - **Text-to-Speech**: ElevenLabs TTS with multiple voices
+            - **Speech-to-Text**: Real-time transcription
+            - **Voice Streaming**: FastRTC integration
+            - **Audio Processing**: MP3/WAV support
+            """)
+            
+            st.markdown("""
+            ### 🧠 Memory Agent Features
+            - **Conversation Storage**: InMemorySaver integration
+            - **Context Retrieval**: Smart memory management
+            - **Session Persistence**: Thread-based memory
+            - **Summary Generation**: Automated summaries
+            """)
+        
+        with col2:
+            st.markdown("""
+            ### 🎮 Discord Agent Features
+            - **Message Sending**: Channel integration
+            - **Voice Channels**: Create and manage
+            - **Bot Commands**: Interactive responses
+            - **Server Management**: Guild operations
+            """)
+            
+            st.markdown("""
+            ### 🆘 Crisis Support Agent
+            - **Crisis Detection**: Real-time monitoring
+            - **Immediate Resources**: 24/7 hotlines
+            - **Safety Protocols**: Professional standards
+            - **Multi-Country Support**: Global resources
+            """)
+        
+        # Architecture diagram
+        st.subheader("🏗️ System Architecture")
+        st.markdown("""
+        ```
+        ┌─────────────────┐    ┌──────────────────────┐
+        │   Streamlit UI  │ ←→ │ LangGraph Supervisor │
+        │   + Crisis UI   │    │  + Crisis Detection  │
+        └─────────────────┘    └──────────┬───────────┘
+                                          │
+                        ┌─────────────────┼─────────────────┐
+                        │                 │                 │
+                ┌───────▼────┐    ┌──────▼──────┐   ┌──────▼──────┐
+                │ Voice Agent│    │Discord Agent│   │Memory Agent │
+                │            │    │             │   │             │
+                │ ElevenLabs │    │ Discord.py  │   │InMemorySaver│
+                │  FastRTC   │    │   Bot API   │   │InMemoryStore│
+                └────────────┘    └─────────────┘   └─────────────┘
+                        │                                   │
+                ┌───────▼────────────────────────────────────▼──────┐
+                │              Crisis Support Agent                 │
+                │        🚨 Mental Health Crisis Detection          │
+                │     ☎️ 988, Samaritans, Crisis Text Line         │
+                └───────────────────────────────────────────────────┘
+        ```
+        """)
+        
+        return
+    
+    # Main chat interface
+    st.subheader("💬 Multi-Agent Chat Interface")
+    
+    # Crisis warning
+    st.warning("🆘 **Need immediate help?** Call 988 (US), text HOME to 741741, or contact your local emergency services")
+    
+    # Initialize chat history
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if "agent" in message:
+                st.caption(f"🤖 Handled by: **{message['agent']}**")
+            if "crisis_detected" in message and message["crisis_detected"]:
+                st.error("🚨 **Crisis Support Response**")
+            if "timestamp" in message:
+                st.caption(f"🕐 {message['timestamp']}")
+    
+    # Chat input
+    if prompt := st.chat_input("Ask the multi-agent system anything... (Crisis support available 24/7)"):
+        # Add user message
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        st.session_state.messages.append({
+            "role": "user", 
+            "content": prompt,
+            "timestamp": timestamp
+        })
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            st.caption(f"🕐 {timestamp}")
+        
+        # Process with agent system
+        with st.chat_message("assistant"):
+            with st.spinner("🤖 Processing through supervisor and agents..."):
+                try:
+                    result = asyncio.run(
+                        st.session_state.agent_system.process_message(
+                            prompt, 
+                            thread_id="streamlit_main_session"
+                        )
+                    )
+                    
+                    if result and "messages" in result and not result.get("error"):
+                        # Extract AI response - look for the most recent BaseMessage
+                        ai_messages = []
+                        for msg in result["messages"]:
+                            if isinstance(msg, (AIMessage, CoreBaseMessage)):
+                                # Handle both AIMessage and BaseMessage types
+                                if hasattr(msg, 'content') and msg.content:
+                                    ai_messages.append(msg)
+                        
+                        if ai_messages:
+                            # Get the last AI message
+                            last_message = ai_messages[-1]
+                            response = last_message.content
+                            
+                            # Determine which agent handled it
+                            agent_name = "supervisor"
+                            content_lower = response.lower()
+                            
+                            # Check for crisis response first
+                            if result.get("crisis_detected") or "crisis" in content_lower or "988" in response:
+                                agent_name = "crisis_agent"
+                            elif any(keyword in content_lower for keyword in ["voice", "tts", "audio", "speech", "sound"]):
+                                agent_name = "voice_agent"
+                            elif any(keyword in content_lower for keyword in ["discord", "channel", "message", "bot"]):
+                                agent_name = "discord_agent"
+                            elif any(keyword in content_lower for keyword in ["memory", "conversation", "stored", "recall"]):
+                                agent_name = "memory_agent"
+                            
+                            st.markdown(response)
+                            st.caption(f"🤖 Response from: **{agent_name}**")
+                            
+                            # Add crisis indicator if detected
+                            if result.get("crisis_detected"):
+                                st.error("🚨 **Crisis Support Resources Provided**")
+                            elif result.get("depression_detected"):
+                                st.warning("💙 **Mental Health Support Available**")
+                            
+                            # Add to chat history
+                            response_timestamp = datetime.now().strftime("%H:%M:%S")
+                            st.session_state.messages.append({
+                                "role": "assistant", 
+                                "content": response,
+                                "agent": agent_name,
+                                "crisis_detected": result.get("crisis_detected", False),
+                                "depression_detected": result.get("depression_detected", False),
+                                "timestamp": response_timestamp
+                            })
+                        else:
+                            st.error("❌ No valid response generated from agents")
+                    else:
+                        error_msg = result.get("error", "Unknown error occurred")
+                        st.error(f"❌ Processing failed: {error_msg}")
+                        
+                except Exception as e:
+                    st.error(f"❌ System error: {str(e)}")
+    
+    # Control panels
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Agent Status Panel
+        with st.expander("🔍 Agent System Status", expanded=False):
+            if st.session_state.get('agent_system'):
+                system = st.session_state.agent_system
+                
+                # System metrics
+                col_a, col_b, col_c = st.columns(3)
+                
+                with col_a:
+                    st.metric(
+                        "Agents Active", 
+                        len(system.agents), 
+                        delta=f"+{len(system.agents)} ready"
+                    )
+                
+                with col_b:
+                    st.metric(
+                        "Crisis Support", 
+                        "🚨 ACTIVE",
+                        delta="24/7 Available"
+                    )
+                
+                with col_c:
+                    st.metric(
+                        "ElevenLabs", 
+                        "Connected" if system.elevenlabs_client else "Offline"
+                    )
+                
+                # Agent details
+                st.markdown("**Active Agents:**")
+                for agent_name in system.agents.keys():
+                    if agent_name == "crisis_agent":
+                        st.markdown(f"🚨 `{agent_name}` (Crisis Support)")
+                    else:
+                        st.markdown(f"✅ `{agent_name}`")
+                
+                # Memory status
+                st.markdown("**Memory System:**")
+                st.markdown(f"✅ Checkpointer: `{type(system.checkpointer).__name__}`")
+                st.markdown(f"✅ Store: `{type(system.store).__name__}`")
+    
+    with col2:
+        # Crisis Support Panel
+        with st.expander("🆘 Crisis Support Information", expanded=False):
+            st.error("**🚨 IMMEDIATE HELP AVAILABLE 24/7**")
+            
+            st.markdown("""
+            **United States:**
+            - 📞 **988** - Suicide & Crisis Lifeline
+            - 💬 **Text HOME to 741741** - Crisis Text Line
+            - 🌐 **suicidepreventionlifeline.org**
+            
+            **International:**
+            - 🇬🇧 **116 123** - Samaritans (UK)
+            - 🇨🇦 **1-833-456-4566** - Talk Suicide Canada
+            - 🇦🇺 **13 11 14** - Lifeline Australia
+            
+            **Emergency Services:**
+            - 🚨 **911** (US), **999** (UK), **000** (AU)
+            """)
+            
+            if st.button("🆘 Test Crisis Detection", use_container_width=True):
+                if st.session_state.get('agent_system'):
+                    test_result = asyncio.run(
+                        st.session_state.agent_system.process_message(
+                            "I'm feeling really hopeless and need help",
+                            thread_id="crisis_test_session"
+                        )
+                    )
+                    if test_result.get("crisis_detected") or test_result.get("depression_detected"):
+                        st.success("✅ Crisis detection system working correctly")
+                    else:
+                        st.warning("⚠️ Crisis detection may need adjustment")
+                else:
+                    st.error("❌ System not initialized")
+    
+    # Advanced controls
+    with st.expander("⚙️ Advanced System Controls", expanded=False):
+        col_x, col_y = st.columns(2)
+        
+        with col_x:
+            if st.button("🔄 Reset Chat History", use_container_width=True):
+                st.session_state.messages = []
+                st.success("✅ Chat history cleared")
+                st.rerun()
+            
+            if st.button("🧠 Test Memory System", use_container_width=True):
+                if st.session_state.get('agent_system'):
+                    test_result = asyncio.run(
+                        st.session_state.agent_system.process_message(
+                            "Please test the memory system and store this conversation",
+                            thread_id="memory_test_session"
+                        )
+                    )
+                    st.success("✅ Memory system test completed")
+                else:
+                    st.error("❌ System not initialized")
+        
+        with col_y:
+            if st.button("🎮 Test Discord Integration", use_container_width=True):
+                if st.session_state.get('agent_system'):
+                    test_result = asyncio.run(
+                        st.session_state.agent_system.process_message(
+                            "Please test Discord integration and show available channels",
+                            thread_id="discord_test_session"
+                        )
+                    )
+                    st.success("✅ Discord integration test completed")
+                else:
+                    st.error("❌ System not initialized")
+            
+            if st.button("🎙️ Test Voice System", use_container_width=True):
+                if st.session_state.get('agent_system'):
+                    test_result = asyncio.run(
+                        st.session_state.agent_system.process_message(
+                            "Please test the voice system with text-to-speech",
+                            thread_id="voice_test_session"
+                        )
+                    )
+                    st.success("✅ Voice system test completed")
+                else:
+                    st.error("❌ System not initialized")
+    
+    # Safety and Legal Information
+    with st.expander("⚖️ Safety & Legal Information", expanded=False):
+        st.markdown("""
+        **🚨 Crisis Support Disclaimer:**
+        - This system provides crisis detection and resource referrals only
+        - Not a substitute for professional mental health care
+        - In emergencies, contact local emergency services immediately
+        - All crisis hotlines are staffed by trained professionals
+        
+        **🔒 Privacy & Safety:**
+        - Conversations are processed in memory only
+        - No personal data is permanently stored
+        - Crisis detection is automated and may have limitations
+        - Always prioritize professional help for mental health concerns
+        
+        **🛡️ System Capabilities:**
+        - Detects common crisis keywords and phrases
+        - Provides immediate resource referrals
+        - Supports multiple countries' crisis lines
+        - Integrates with voice, Discord, and memory systems
+        
+        **📞 When to Seek Professional Help:**
+        - Persistent thoughts of self-harm
+        - Overwhelming feelings of hopelessness
+        - Substance abuse concerns
+        - Major life changes or trauma
+        - Any mental health crisis
+        """)
+    
+    # Footer
+    st.divider()
+    st.markdown("""
+    <div style='text-align: center; color: #666;'>
+        🤖 <strong>Multi-Agent LangGraph Supervisor System with Crisis Support</strong><br>
+        Powered by LangGraph • ElevenLabs • Discord • FastRTC • Crisis Detection<br>
+        <em>Ready for Streamlit Cloud deployment with 24/7 mental health support</em><br>
+        🆘 <strong>Crisis Support: 988 (US) • 116 123 (UK) • 13 11 14 (AU)</strong>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()
+                import streamlit as st
 import asyncio
 import json
 import threading
@@ -8,6 +448,7 @@ from datetime import datetime
 import numpy as np
 import io
 import wave
+import re
 
 # LangGraph Supervisor and LangChain imports
 from langgraph_supervisor import create_supervisor
@@ -51,6 +492,115 @@ try:
 except ImportError:
     PYDUB_AVAILABLE = False
 
+class CrisisDetector:
+    """Detects mental health crisis indicators and provides appropriate responses"""
+    
+    # Crisis keywords and phrases
+    CRISIS_KEYWORDS = [
+        'suicide', 'kill myself', 'end my life', 'want to die', 'better off dead',
+        'no point living', 'hurt myself', 'self harm', 'overdose', 'can\'t go on',
+        'not safe', 'harm myself', 'end it all', 'give up', 'hopeless'
+    ]
+    
+    DEPRESSION_KEYWORDS = [
+        'depressed', 'depression', 'sad', 'hopeless', 'worthless', 'empty',
+        'lonely', 'isolated', 'exhausted', 'tired of life', 'dark thoughts'
+    ]
+    
+    HOTLINES = {
+        'US': {
+            'name': '988 Suicide & Crisis Lifeline',
+            'number': '988',
+            'text': 'Text HOME to 741741',
+            'chat': 'suicidepreventionlifeline.org'
+        },
+        'UK': {
+            'name': 'Samaritans',
+            'number': '116 123',
+            'text': 'Text SHOUT to 85258',
+            'chat': 'samaritans.org'
+        },
+        'CA': {
+            'name': 'Talk Suicide Canada',
+            'number': '1-833-456-4566',
+            'text': 'Text 45645',
+            'chat': 'talksuicide.ca'
+        },
+        'AU': {
+            'name': 'Lifeline Australia',
+            'number': '13 11 14',
+            'text': 'Text 0477 13 11 14',
+            'chat': 'lifeline.org.au'
+        }
+    }
+    
+    @staticmethod
+    def detect_crisis(text: str) -> Dict[str, Any]:
+        """Detect crisis indicators in text"""
+        text_lower = text.lower()
+        
+        crisis_detected = any(keyword in text_lower for keyword in CrisisDetector.CRISIS_KEYWORDS)
+        depression_detected = any(keyword in text_lower for keyword in CrisisDetector.DEPRESSION_KEYWORDS)
+        
+        # Check for "not safe" specifically
+        not_safe = 'not safe' in text_lower or 'unsafe' in text_lower
+        
+        severity = 'none'
+        if crisis_detected or not_safe:
+            severity = 'high'
+        elif depression_detected:
+            severity = 'moderate'
+        
+        return {
+            'crisis_detected': crisis_detected or not_safe,
+            'depression_detected': depression_detected,
+            'severity': severity,
+            'needs_immediate_help': crisis_detected or not_safe
+        }
+    
+    @staticmethod
+    def get_crisis_response(country_code: str = 'US') -> str:
+        """Get appropriate crisis response with hotline information"""
+        hotline = CrisisDetector.HOTLINES.get(country_code, CrisisDetector.HOTLINES['US'])
+        
+        response = f"""🚨 **IMMEDIATE HELP AVAILABLE** 🚨
+
+I'm concerned about your safety and wellbeing. Please know that you matter and help is available right now:
+
+**{hotline['name']}**
+📞 **Call: {hotline['number']}** (Available 24/7)
+💬 **Text: {hotline['text']}**
+🌐 **Chat: {hotline['chat']}**
+
+**If you're in immediate danger:**
+🚨 **Call emergency services: 911 (US), 999 (UK), 000 (AU)**
+
+**You are not alone. These feelings can change. Please reach out for help.**
+
+Would you like me to help you find additional local resources or someone to talk to right now?"""
+        
+        return response
+    
+    @staticmethod
+    def get_supportive_response() -> str:
+        """Get supportive response for depression indicators"""
+        return """💙 **You're Not Alone** 💙
+
+I hear that you're going through a difficult time. Your feelings are valid, and it's brave of you to share them.
+
+**Immediate Support Available:**
+📞 **988** (Suicide & Crisis Lifeline - US)
+💬 **Text HOME to 741741** (Crisis Text Line)
+🌐 **Online chat at suicidepreventionlifeline.org**
+
+**Remember:**
+- These feelings are temporary and can change
+- You deserve support and care
+- Professional counselors are available to help
+- Taking care of your mental health is important
+
+Would you like help finding a therapist, counselor, or other mental health resources in your area?"""
+
 class MultiAgentSystem:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -62,6 +612,7 @@ class MultiAgentSystem:
         self.supervisor_workflow = None
         self.compiled_app = None
         self.agents = {}
+        self.crisis_detector = CrisisDetector()
         
         # Initialize clients and agents
         self._initialize_clients()
@@ -302,43 +853,37 @@ class MultiAgentSystem:
         return [store_conversation, retrieve_conversation, get_conversation_summary, list_conversations, get_memory_status]
     
     def _create_research_tools(self):
-        """Create tools for research agent"""
+        """Research agent removed as requested - this method is no longer needed"""
+        pass
+    
+    def _create_crisis_tools(self):
+        """Create tools for crisis detection and response"""
         @tool
-        def web_search(query: str) -> str:
-            """Search the web for information (mock implementation)"""
+        def detect_crisis_indicators(user_message: str) -> str:
+            """Detect mental health crisis indicators in user message"""
             try:
-                # Mock search results
-                results = {
-                    "query": query,
-                    "results": [
-                        {"title": f"Results for '{query}' - Article 1", "snippet": "Relevant information about the query..."},
-                        {"title": f"Results for '{query}' - Article 2", "snippet": "Additional context and details..."},
-                        {"title": f"Results for '{query}' - Article 3", "snippet": "Further insights and analysis..."}
-                    ],
-                    "total_results": 3
-                }
-                return json.dumps(results, indent=2)
+                detection = self.crisis_detector.detect_crisis(user_message)
+                return json.dumps(detection, indent=2)
             except Exception as e:
-                return f"❌ Search error: {str(e)}"
+                return f"❌ Crisis detection error: {str(e)}"
         
         @tool
-        def analyze_data(data_description: str) -> str:
-            """Analyze data and provide insights"""
+        def get_crisis_resources(country_code: str = "US") -> str:
+            """Get mental health crisis resources and hotlines"""
             try:
-                analysis = {
-                    "data_type": data_description,
-                    "analysis": f"Analysis of {data_description} shows interesting patterns and trends.",
-                    "insights": [
-                        "Key insight 1: Data shows positive correlation",
-                        "Key insight 2: Trending patterns identified",
-                        "Key insight 3: Recommendations for improvement"
-                    ]
-                }
-                return json.dumps(analysis, indent=2)
+                return self.crisis_detector.get_crisis_response(country_code)
             except Exception as e:
-                return f"❌ Analysis error: {str(e)}"
+                return f"❌ Crisis resources error: {str(e)}"
         
-        return [web_search, analyze_data]
+        @tool
+        def get_mental_health_support() -> str:
+            """Get supportive mental health resources"""
+            try:
+                return self.crisis_detector.get_supportive_response()
+            except Exception as e:
+                return f"❌ Mental health support error: {str(e)}"
+        
+        return [detect_crisis_indicators, get_crisis_resources, get_mental_health_support]
     
     def _create_specialized_agents(self):
         """Create specialized agents using create_react_agent with proper prompts"""
@@ -357,12 +902,10 @@ Your responsibilities include:
 
 Always prioritize clear, natural speech output and accurate transcription. Use appropriate voice settings based on context."""
 
-        voice_prompt = self._create_react_prompt(voice_system_content)
-        voice_agent = create_react_agent(llm, voice_tools, voice_prompt)
+        voice_agent = create_react_agent(llm, voice_tools)
         self.agents['voice_agent'] = AgentExecutor(
             agent=voice_agent, 
             tools=voice_tools, 
-            name="voice_expert",
             verbose=True,
             handle_parsing_errors=True
         )
@@ -380,12 +923,10 @@ Your responsibilities include:
 
 Always ensure messages are appropriate for the target audience and follow Discord community guidelines. Use proper Discord markdown formatting when needed."""
 
-        discord_prompt = self._create_react_prompt(discord_system_content)
-        discord_agent = create_react_agent(llm, discord_tools, discord_prompt)
+        discord_agent = create_react_agent(llm, discord_tools)
         self.agents['discord_agent'] = AgentExecutor(
             agent=discord_agent, 
             tools=discord_tools, 
-            name="discord_expert",
             verbose=True,
             handle_parsing_errors=True
         )
@@ -403,99 +944,84 @@ Your responsibilities include:
 
 Always maintain conversation context and provide relevant historical information when needed. Ensure data privacy and proper organization of stored information."""
 
-        memory_prompt = self._create_react_prompt(memory_system_content)
-        memory_agent = create_react_agent(llm, memory_tools, memory_prompt)
+        memory_agent = create_react_agent(llm, memory_tools)
         self.agents['memory_agent'] = AgentExecutor(
             agent=memory_agent, 
             tools=memory_tools, 
-            name="memory_expert",
             verbose=True,
             handle_parsing_errors=True
         )
         
-        # Research Agent
-        research_tools = self._create_research_tools()
-        research_system_content = """You are a research and analysis expert specializing in information gathering and data analysis.
+        # Research Agent - REMOVED as requested
+        # research_tools = self._create_research_tools()
+        # research_agent = create_react_agent(llm, research_tools)
+        # self.agents['research_agent'] = AgentExecutor(
+        #     agent=research_agent, 
+        #     tools=research_tools, 
+        #     verbose=True,
+        #     handle_parsing_errors=True
+        # )
+        
+        # Crisis Support Agent
+        crisis_tools = self._create_crisis_tools()
+        crisis_system_content = """You are a mental health crisis support expert trained to detect and respond to mental health emergencies.
 
 Your responsibilities include:
-- Conducting web searches for accurate and relevant information
-- Analyzing data patterns and providing actionable insights
-- Synthesizing information from multiple sources
-- Providing fact-based responses with proper context
-- Generating comprehensive research reports
+- Detecting crisis indicators and mental health emergencies
+- Providing immediate crisis resources and hotline information
+- Offering supportive responses for depression and mental health issues
+- Following crisis intervention protocols
+- Prioritizing user safety above all else
 
-Always verify information accuracy and provide well-structured, evidence-based responses. Cite sources when applicable and highlight key insights clearly."""
+CRITICAL: If someone indicates they are "not safe" or expresses suicidal thoughts, immediately provide crisis hotline information and encourage professional help. Always take mental health concerns seriously."""
 
-        research_prompt = self._create_react_prompt(research_system_content)
-        research_agent = create_react_agent(llm, research_tools, research_prompt)
-        self.agents['research_agent'] = AgentExecutor(
-            agent=research_agent, 
-            tools=research_tools, 
-            name="research_expert",
+        crisis_agent = create_react_agent(llm, crisis_tools)
+        self.agents['crisis_agent'] = AgentExecutor(
+            agent=crisis_agent, 
+            tools=crisis_tools, 
             verbose=True,
             handle_parsing_errors=True
         )
         
-        st.success(f"✅ Created {len(self.agents)} specialized agents with custom REACT prompts")
-        
-    def _create_react_prompt(self, system_content: str) -> PromptTemplate:
-        """Create a REACT prompt with system message"""
-        template = f'''{system_content}
-
-Answer the following questions as best you can. You have access to the following tools:
-
-{{tools}}
-
-Use the following format:
-
-Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{{tool_names}}]
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Begin!
-
-Question: {{input}}
-Thought:{{agent_scratchpad}}'''
-
-        return PromptTemplate.from_template(template)
+        st.success(f"✅ Created {len(self.agents)} specialized agents including crisis support")
     
     def _create_supervisor_workflow(self):
         """Create the supervisor workflow using langgraph_supervisor"""
         try:
             llm = self._get_llm()
             
-            # Get list of agent executors (not just agents)
+            # Get list of agent executors
             agent_list = list(self.agents.values())
             
-            # Create supervisor system prompt (not SystemMessage for supervisor)
-            supervisor_prompt = """You are an intelligent multi-agent system supervisor coordinating specialized AI agents.
+            # Create supervisor system prompt with crisis detection
+            supervisor_prompt = """You are an intelligent multi-agent system supervisor coordinating specialized AI agents with CRISIS DETECTION capabilities.
 
 Your team consists of:
-1. **voice_expert**: Handles all voice, audio, TTS, STT, and FastRTC streaming tasks
-2. **discord_expert**: Manages Discord bot operations, messaging, and server interactions  
-3. **memory_expert**: Handles conversation storage, retrieval, and memory management
-4. **research_expert**: Conducts research, web searches, and data analysis
+1. **voice_agent**: Handles all voice, audio, TTS, STT, and FastRTC streaming tasks
+2. **discord_agent**: Manages Discord bot operations, messaging, and server interactions  
+3. **memory_agent**: Handles conversation storage, retrieval, and memory management
+4. **crisis_agent**: PRIORITY - Detects mental health crises and provides immediate support
+
+🚨 CRISIS DETECTION PROTOCOL:
+- ALWAYS scan user input for crisis indicators first
+- Keywords: suicide, kill myself, hurt myself, not safe, end my life, hopeless, etc.
+- If crisis detected → IMMEDIATELY route to crisis_agent
+- Provide hotline information and professional resources
+- Never ignore or downplay mental health concerns
 
 ROUTING RULES:
-- Voice/Audio requests → voice_expert (keywords: voice, audio, speech, TTS, STT, sound, listen, speak)
-- Discord requests → discord_expert (keywords: discord, message, channel, bot, server, chat)
-- Memory requests → memory_expert (keywords: remember, store, recall, history, conversation, save)
-- Research requests → research_expert (keywords: search, research, find, analyze, information, data)
+- Crisis/Mental Health → crisis_agent (HIGHEST PRIORITY)
+- Voice/Audio → voice_agent (keywords: voice, audio, speech, TTS, STT, sound)
+- Discord → discord_agent (keywords: discord, message, channel, bot, server)
+- Memory → memory_agent (keywords: remember, store, recall, history, conversation)
 
-For complex requests involving multiple domains, coordinate between agents as needed.
-
-Always provide helpful, accurate responses and ensure smooth handoffs between agents. Maintain context throughout the conversation."""
+Always prioritize user safety and wellbeing. For complex requests, coordinate between agents as needed."""
             
             # Create supervisor using langgraph_supervisor
             self.supervisor_workflow = create_supervisor(
                 agents=agent_list,
                 model=llm,
-                prompt=supervisor_prompt,  # Use prompt parameter instead of system_message
+                prompt=supervisor_prompt,
                 output_mode="full_history"
             )
             
@@ -505,27 +1031,65 @@ Always provide helpful, accurate responses and ensure smooth handoffs between ag
                 store=self.store
             )
             
-            st.success("🔗 Supervisor workflow created with custom prompt and compiled successfully")
+            st.success("🔗 Supervisor workflow created with crisis detection and compiled successfully")
             
         except Exception as e:
             st.error(f"❌ Supervisor workflow creation failed: {str(e)}")
             raise
     
     async def process_message(self, user_message: str, thread_id: str = "default_session") -> Dict[str, Any]:
-        """Process a user message through the supervisor workflow"""
+        """Process a user message through the supervisor workflow with crisis detection"""
         try:
             if not self.compiled_app:
                 raise ValueError("Supervisor workflow not initialized")
             
-            # Create input state with proper BaseMessage types
+            # FIRST: Check for crisis indicators
+            crisis_detection = self.crisis_detector.detect_crisis(user_message)
+            
+            # If crisis detected, immediately provide crisis response
+            if crisis_detection['crisis_detected']:
+                crisis_response = self.crisis_detector.get_crisis_response()
+                
+                # Log crisis event
+                st.error("🚨 CRISIS DETECTED - Immediate help resources provided")
+                
+                return {
+                    "messages": [
+                        HumanMessage(content=user_message),
+                        AIMessage(content=crisis_response)
+                    ],
+                    "crisis_detected": True,
+                    "severity": crisis_detection['severity']
+                }
+            
+            # If depression indicators, include supportive response
+            if crisis_detection['depression_detected']:
+                supportive_response = self.crisis_detector.get_supportive_response()
+                
+                # Process through normal workflow but include crisis context
+                input_state = {
+                    "messages": [
+                        HumanMessage(content=user_message),
+                        SystemMessage(content="Note: Depression indicators detected. Prioritize supportive, empathetic responses.")
+                    ]
+                }
+                
+                config = {"configurable": {"thread_id": thread_id}}
+                result = await self.compiled_app.ainvoke(input_state, config)
+                
+                # Append supportive message
+                if "messages" in result:
+                    result["messages"].append(AIMessage(content=supportive_response))
+                
+                result["depression_detected"] = True
+                return result
+            
+            # Normal processing for non-crisis messages
             input_state = {
                 "messages": [HumanMessage(content=user_message)]
             }
             
-            # Configure with thread ID for memory persistence
             config = {"configurable": {"thread_id": thread_id}}
-            
-            # Process through supervisor workflow
             result = await self.compiled_app.ainvoke(input_state, config)
             
             return result
@@ -557,7 +1121,7 @@ Always provide helpful, accurate responses and ensure smooth handoffs between ag
                 transcript = transcription.text if hasattr(transcription, 'text') else str(transcription)
                 
                 if transcript.strip():
-                    # Process through supervisor
+                    # Process through supervisor with crisis detection
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
@@ -578,477 +1142,9 @@ Always provide helpful, accurate responses and ensure smooth handoffs between ag
                             else:
                                 response_text = "I'm processing your request."
                         else:
-                            response_text = "I'm here to help with voice, Discord, memory, and research tasks."
+                            response_text = "I'm here to help. If you're experiencing a crisis, please call 988 for immediate support."
                             
                     finally:
                         loop.close()
                 else:
                     response_text = "I'm listening. Please tell me how I can help you."
-                
-                # Generate TTS response
-                voice_id = self.config.get('elevenlabs_voice_id', 'JBFqnCBsd6RMkjVDRZzb')
-                tts_audio = self.elevenlabs_client.text_to_speech.convert(
-                    text=response_text,
-                    voice_id=voice_id,
-                    model_id=self.config.get('elevenlabs_model', 'eleven_multilingual_v2'),
-                    output_format="mp3_22050_32"
-                )
-                
-                # Process and yield audio chunks
-                yield from self._process_tts_audio(tts_audio)
-                
-            except Exception as e:
-                st.error(f"Voice response error: {str(e)}")
-                # Return silence on error
-                for _ in range(int(22050 * 2 / 1024)):
-                    yield (22050, np.zeros(1024, dtype=np.float32))
-        
-        return Stream(
-            modality="audio",
-            mode="send-receive",
-            handler=ReplyOnPause(
-                voice_response,
-                algo_options=AlgoOptions(speech_threshold=0.3)
-            )
-        )
-    
-    def _audio_to_wav_bytes(self, audio_tuple):
-        """Convert audio tuple to WAV bytes"""
-        sample_rate, audio_data = audio_tuple
-        
-        if audio_data.dtype != np.float32:
-            audio_data = audio_data.astype(np.float32)
-        
-        audio_int16 = (audio_data * 32767).astype(np.int16)
-        
-        wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_int16.tobytes())
-        
-        wav_buffer.seek(0)
-        return wav_buffer.read()
-    
-    def _process_tts_audio(self, tts_response):
-        """Process TTS audio response for streaming"""
-        try:
-            # Collect audio data
-            if hasattr(tts_response, '__iter__') and not isinstance(tts_response, (str, bytes)):
-                audio_content = b''.join(tts_response)
-            elif hasattr(tts_response, 'read'):
-                audio_content = tts_response.read()
-            elif isinstance(tts_response, bytes):
-                audio_content = tts_response
-            else:
-                audio_content = bytes(tts_response)
-            
-            if not audio_content:
-                # Return silence if no audio
-                for _ in range(int(22050 * 2 / 1024)):
-                    yield (22050, np.zeros(1024, dtype=np.float32))
-                return
-            
-            # Process MP3 audio
-            if PYDUB_AVAILABLE and (audio_content.startswith(b'ID3') or audio_content[0:2] == b'\xff\xfb'):
-                audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_content))
-                if audio_segment.channels > 1:
-                    audio_segment = audio_segment.set_channels(1)
-                
-                sample_rate = audio_segment.frame_rate
-                raw_audio = audio_segment.raw_data
-                audio_array = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
-            else:
-                # Fallback to raw processing
-                sample_rate = 22050
-                audio_array = np.frombuffer(audio_content, dtype=np.int16).astype(np.float32) / 32768.0
-            
-            # Stream in chunks
-            chunk_size = 1024
-            for i in range(0, len(audio_array), chunk_size):
-                chunk = audio_array[i:i + chunk_size]
-                if len(chunk) < chunk_size:
-                    padded_chunk = np.zeros(chunk_size, dtype=np.float32)
-                    padded_chunk[:len(chunk)] = chunk
-                    chunk = padded_chunk
-                yield (sample_rate, chunk)
-                
-        except Exception as e:
-            st.error(f"TTS processing error: {str(e)}")
-            for _ in range(int(22050 * 2 / 1024)):
-                yield (22050, np.zeros(1024, dtype=np.float32))
-
-
-def main():
-    st.set_page_config(
-        page_title="🤖 Multi-Agent LangGraph System",
-        page_icon="🤖",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    st.title("🤖 Multi-Agent LangGraph Supervisor System")
-    st.markdown("**Powered by LangGraph Supervisor with Voice, Discord & Memory Integration**")
-    
-    # Sidebar configuration
-    with st.sidebar:
-        st.header("🔧 System Configuration")
-        
-        # Model Configuration
-        st.subheader("🧠 AI Model Setup")
-        model_provider = st.selectbox("Provider", ["openai", "groq"], key="model_provider")
-        
-        if model_provider == "openai":
-            openai_api_key = st.text_input("OpenAI API Key", type="password", key="openai_key")
-            model_name = st.selectbox("Model", ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"], key="openai_model")
-        else:
-            groq_api_key = st.text_input("Groq API Key", type="password", key="groq_key")
-            model_name = st.selectbox("Model", ["llama3-70b-8192", "mixtral-8x7b-32768", "gemma-7b-it"], key="groq_model")
-        
-        temperature = st.slider("Temperature", 0.0, 2.0, 0.7, key="temperature")
-        
-        # ElevenLabs Configuration
-        st.subheader("🎙️ ElevenLabs Voice")
-        elevenlabs_api_key = st.text_input("ElevenLabs API Key", type="password", key="elevenlabs_key")
-        elevenlabs_voice_id = st.text_input("Voice ID", value="JBFqnCBsd6RMkjVDRZzb", key="voice_id")
-        elevenlabs_model = st.selectbox("Voice Model", ["eleven_multilingual_v2", "eleven_monolingual_v1"], key="voice_model")
-        
-        # Discord Configuration
-        st.subheader("🎮 Discord Integration")
-        discord_bot_token = st.text_input("Discord Bot Token", type="password", key="discord_token")
-        discord_guild_id = st.text_input("Guild ID", key="guild_id")
-        discord_channel_id = st.text_input("Default Channel ID", key="channel_id")
-        
-        # System Requirements Check
-        st.subheader("📋 System Status")
-        requirements = {
-            "FastRTC": FASTRTC_AVAILABLE,
-            "ElevenLabs": ELEVENLABS_AVAILABLE,
-            "Discord.py": DISCORD_AVAILABLE,
-            "Pydub": PYDUB_AVAILABLE
-        }
-        
-        for req, available in requirements.items():
-            status = "✅" if available else "❌"
-            color = "green" if available else "red"
-            st.markdown(f":{color}[{status} {req}]")
-        
-        # Initialize System
-        st.divider()
-        if st.button("🚀 Initialize Multi-Agent System", use_container_width=True):
-            required_key = openai_api_key if model_provider == "openai" else groq_api_key
-            
-            if not required_key:
-                st.error("❌ Please provide the required API key")
-            else:
-                config = {
-                    "model_provider": model_provider,
-                    "model_name": model_name,
-                    "temperature": temperature,
-                    "openai_api_key": openai_api_key if model_provider == "openai" else None,
-                    "groq_api_key": groq_api_key if model_provider == "groq" else None,
-                    "elevenlabs_api_key": elevenlabs_api_key,
-                    "elevenlabs_voice_id": elevenlabs_voice_id,
-                    "elevenlabs_model": elevenlabs_model,
-                    "discord_bot_token": discord_bot_token,
-                    "discord_guild_id": discord_guild_id,
-                    "discord_channel_id": discord_channel_id
-                }
-                
-                with st.spinner("Initializing multi-agent system..."):
-                    try:
-                        st.session_state.agent_system = MultiAgentSystem(config)
-                        st.session_state.initialized = True
-                        st.success("🎉 Multi-Agent System Initialized Successfully!")
-                        st.balloons()
-                    except Exception as e:
-                        st.error(f"❌ Initialization failed: {str(e)}")
-    
-    # Main interface
-    if not st.session_state.get('initialized', False):
-        # Welcome screen
-        st.info("👈 Configure your API keys and initialize the system using the sidebar")
-        
-        # Feature showcase
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            ### 🎙️ Voice Agent Features
-            - **Text-to-Speech**: ElevenLabs TTS with multiple voices
-            - **Speech-to-Text**: Real-time transcription
-            - **Voice Streaming**: FastRTC integration
-            - **Audio Processing**: MP3/WAV support
-            """)
-            
-            st.markdown("""
-            ### 🧠 Memory Agent Features
-            - **Conversation Storage**: InMemorySaver integration
-            - **Context Retrieval**: Smart memory management
-            - **Session Persistence**: Thread-based memory
-            - **Summary Generation**: Automated summaries
-            """)
-        
-        with col2:
-            st.markdown("""
-            ### 🎮 Discord Agent Features
-            - **Message Sending**: Channel integration
-            - **Voice Channels**: Create and manage
-            - **Bot Commands**: Interactive responses
-            - **Server Management**: Guild operations
-            """)
-            
-            st.markdown("""
-            ### 🔍 Research Agent Features
-            - **Web Search**: Information gathering
-            - **Data Analysis**: Pattern recognition
-            - **Insights Generation**: Smart analysis
-            - **Knowledge Base**: Contextual responses
-            """)
-        
-        # Architecture diagram
-        st.subheader("🏗️ System Architecture")
-        st.markdown("""
-        ```
-        ┌─────────────────┐    ┌──────────────────────┐
-        │   Streamlit UI  │ ←→ │ LangGraph Supervisor │
-        └─────────────────┘    └──────────┬───────────┘
-                                          │
-                        ┌─────────────────┼─────────────────┐
-                        │                 │                 │
-                ┌───────▼────┐    ┌──────▼──────┐   ┌──────▼──────┐
-                │ Voice Agent│    │Discord Agent│   │Memory Agent │
-                │            │    │             │   │             │
-                │ ElevenLabs │    │ Discord.py  │   │InMemorySaver│
-                │  FastRTC   │    │   Bot API   │   │InMemoryStore│
-                └────────────┘    └─────────────┘   └─────────────┘
-                        │                 │                 │
-                ┌───────▼────┐    ┌──────▼──────┐   ┌──────▼──────┐
-                │    TTS     │    │  Channels   │   │Conversations│
-                │    STT     │    │  Messages   │   │  Context    │
-                │   Audio    │    │  Commands   │   │  Summaries  │
-                └────────────┘    └─────────────┘   └─────────────┘
-        ```
-        """)
-        
-        return
-    
-    # Main chat interface
-    st.subheader("💬 Multi-Agent Chat Interface")
-    
-    # Initialize chat history
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    
-    # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if "agent" in message:
-                st.caption(f"🤖 Handled by: **{message['agent']}**")
-            if "timestamp" in message:
-                st.caption(f"🕐 {message['timestamp']}")
-    
-    # Chat input
-    if prompt := st.chat_input("Ask the multi-agent system anything..."):
-        # Add user message
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        st.session_state.messages.append({
-            "role": "user", 
-            "content": prompt,
-            "timestamp": timestamp
-        })
-        
-        with st.chat_message("user"):
-            st.markdown(prompt)
-            st.caption(f"🕐 {timestamp}")
-        
-        # Process with agent system
-        with st.chat_message("assistant"):
-            with st.spinner("🤖 Processing through supervisor and agents..."):
-                try:
-                    result = asyncio.run(
-                        st.session_state.agent_system.process_message(
-                            prompt, 
-                            thread_id="streamlit_main_session"
-                        )
-                    )
-                    
-                    if result and "messages" in result and not result.get("error"):
-                        # Extract AI response - look for the most recent BaseMessage
-                        ai_messages = []
-                        for msg in result["messages"]:
-                            if isinstance(msg, (AIMessage, CoreBaseMessage)):
-                                # Handle both AIMessage and BaseMessage types
-                                if hasattr(msg, 'content') and msg.content:
-                                    ai_messages.append(msg)
-                        
-                        if ai_messages:
-                            # Get the last AI message
-                            last_message = ai_messages[-1]
-                            response = last_message.content
-                            
-                            # Try to determine which agent handled it based on content
-                            agent_name = "supervisor"
-                            content_lower = response.lower()
-                            
-                            if any(keyword in content_lower for keyword in ["voice", "tts", "audio", "speech", "sound"]):
-                                agent_name = "voice_expert"
-                            elif any(keyword in content_lower for keyword in ["discord", "channel", "message", "bot"]):
-                                agent_name = "discord_expert"
-                            elif any(keyword in content_lower for keyword in ["memory", "conversation", "stored", "recall"]):
-                                agent_name = "memory_expert"
-                            elif any(keyword in content_lower for keyword in ["search", "research", "analysis", "data"]):
-                                agent_name = "research_expert"
-                            
-                            st.markdown(response)
-                            st.caption(f"🤖 Response from: **{agent_name}**")
-                            
-                            # Add to chat history
-                            response_timestamp = datetime.now().strftime("%H:%M:%S")
-                            st.session_state.messages.append({
-                                "role": "assistant", 
-                                "content": response,
-                                "agent": agent_name,
-                                "timestamp": response_timestamp
-                            })
-                        else:
-                            st.error("❌ No valid response generated from agents")
-                    else:
-                        error_msg = result.get("error", "Unknown error occurred")
-                        st.error(f"❌ Processing failed: {error_msg}")
-                        
-                except Exception as e:
-                    st.error(f"❌ System error: {str(e)}")
-    
-    # Control panels
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Agent Status Panel
-        with st.expander("🔍 Agent System Status", expanded=False):
-            if st.session_state.get('agent_system'):
-                system = st.session_state.agent_system
-                
-                # System metrics
-                col_a, col_b, col_c = st.columns(3)
-                
-                with col_a:
-                    st.metric(
-                        "Agents Active", 
-                        len(system.agents), 
-                        delta=f"+{len(system.agents)} ready"
-                    )
-                
-                with col_b:
-                    st.metric(
-                        "ElevenLabs", 
-                        "Connected" if system.elevenlabs_client else "Offline"
-                    )
-                
-                with col_c:
-                    st.metric(
-                        "Discord", 
-                        "Connected" if system.discord_bot else "Offline"
-                    )
-                
-                # Agent details
-                st.markdown("**Active Agents:**")
-                for agent_name in system.agents.keys():
-                    st.markdown(f"✅ `{agent_name}`")
-                
-                # Memory status
-                st.markdown("**Memory System:**")
-                st.markdown(f"✅ Checkpointer: `{type(system.checkpointer).__name__}`")
-                st.markdown(f"✅ Store: `{type(system.store).__name__}`")
-    
-    with col2:
-        # Voice Interface Panel
-        with st.expander("🎙️ Voice Interface Controls", expanded=False):
-            if FASTRTC_AVAILABLE and st.session_state.get('agent_system'):
-                st.markdown("**Voice Features Available:**")
-                
-                if st.button("🎤 Test Voice Input", use_container_width=True):
-                    st.info("🎙️ Voice input test initiated")
-                    st.markdown("*In a full deployment, this would start FastRTC voice streaming*")
-                
-                if st.button("🔊 Test Text-to-Speech", use_container_width=True):
-                    test_text = "Hello! This is a test of the multi-agent voice system."
-                    if st.session_state.agent_system.elevenlabs_client:
-                        with st.spinner("Generating speech..."):
-                            # Simulate TTS
-                            st.success("🔊 TTS generated successfully!")
-                            st.markdown(f"*Generated audio for: '{test_text}'*")
-                    else:
-                        st.error("❌ ElevenLabs not configured")
-                
-                # Voice settings
-                st.markdown("**Current Voice Settings:**")
-                system = st.session_state.agent_system
-                st.markdown(f"- Voice ID: `{system.config.get('elevenlabs_voice_id', 'Not set')}`")
-                st.markdown(f"- Model: `{system.config.get('elevenlabs_model', 'Not set')}`")
-                
-            else:
-                st.warning("⚠️ Voice features require FastRTC and ElevenLabs configuration")
-    
-    # Advanced controls
-    with st.expander("⚙️ Advanced System Controls", expanded=False):
-        col_x, col_y = st.columns(2)
-        
-        with col_x:
-            if st.button("🔄 Reset Chat History", use_container_width=True):
-                st.session_state.messages = []
-                st.success("✅ Chat history cleared")
-                st.rerun()
-            
-            if st.button("🧠 Test Memory System", use_container_width=True):
-                if st.session_state.get('agent_system'):
-                    test_result = asyncio.run(
-                        st.session_state.agent_system.process_message(
-                            "Please test the memory system and store this conversation",
-                            thread_id="memory_test_session"
-                        )
-                    )
-                    st.success("✅ Memory system test completed")
-                else:
-                    st.error("❌ System not initialized")
-        
-        with col_y:
-            if st.button("🎮 Test Discord Integration", use_container_width=True):
-                if st.session_state.get('agent_system'):
-                    test_result = asyncio.run(
-                        st.session_state.agent_system.process_message(
-                            "Please test Discord integration and show available channels",
-                            thread_id="discord_test_session"
-                        )
-                    )
-                    st.success("✅ Discord integration test completed")
-                else:
-                    st.error("❌ System not initialized")
-            
-            if st.button("🔍 Test Research Agent", use_container_width=True):
-                if st.session_state.get('agent_system'):
-                    test_result = asyncio.run(
-                        st.session_state.agent_system.process_message(
-                            "Please search for information about LangGraph and multi-agent systems",
-                            thread_id="research_test_session"
-                        )
-                    )
-                    st.success("✅ Research agent test completed")
-                else:
-                    st.error("❌ System not initialized")
-    
-    # Footer
-    st.divider()
-    st.markdown("""
-    <div style='text-align: center; color: #666;'>
-        🤖 <strong>Multi-Agent LangGraph Supervisor System</strong><br>
-        Powered by LangGraph • ElevenLabs • Discord • FastRTC<br>
-        <em>Ready for Streamlit Cloud deployment</em>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-if __name__ == "__main__":
-    main()
