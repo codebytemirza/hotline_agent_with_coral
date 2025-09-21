@@ -449,22 +449,21 @@ class CrisisAgentWithTools:
     def create_crisis_agent(self):
         """Create React Agent with crisis tools"""
         
-        # Create crisis response prompt
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a CRISIS INTERVENTION SPECIALIST with access to life-saving tools.
+        # Create proper ReAct prompt template with required variables
+        template = """You are a CRISIS INTERVENTION SPECIALIST with access to life-saving tools.
 
 **CRITICAL MISSION:** Detect mental health crises and provide immediate professional intervention.
 
 **AVAILABLE TOOLS:**
-1. detect_crisis_level() - Analyze user messages for crisis indicators
-2. provide_crisis_hotlines() - Provide 988 and international crisis resources  
-3. send_discord_emergency_alert() - Send REAL alerts to crisis response team
+{tools}
+
+**TOOL NAMES:** {tool_names}
 
 **CRISIS RESPONSE PROTOCOL:**
-1. **ALWAYS** use detect_crisis_level() first to analyze user input
+1. **ALWAYS** use detect_crisis_level first to analyze user input
 2. **IF CRISIS DETECTED:** 
-   - Use provide_crisis_hotlines() immediately for 988/crisis resources
-   - Use send_discord_emergency_alert() to notify crisis team
+   - Use provide_crisis_hotlines immediately for 988/crisis resources
+   - Use send_discord_emergency_alert to notify crisis team
    - Provide compassionate support and encourage professional help
 3. **IF NO CRISIS:** Provide supportive response with crisis resources available
 
@@ -473,10 +472,26 @@ class CrisisAgentWithTools:
 💡 MEDIUM: Hopelessness, depression → Professional resources  
 📞 ALL CASES: Crisis hotlines always available
 
-**Remember:** You might save a life. Take every crisis signal seriously and use ALL available tools."""),
-            ("human", "{input}"),
-            ("assistant", "{agent_scratchpad}")
-        ])
+**REASONING FORMAT:**
+Use this exact format for your reasoning:
+
+Question: the input question you must answer
+Thought: you should always think about what to do
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: the final answer to the original input question
+
+**Remember:** You might save a life. Take every crisis signal seriously and use ALL available tools.
+
+Question: {input}
+Thought: {agent_scratchpad}"""
+
+        from langchain.prompts import PromptTemplate
+        
+        prompt = PromptTemplate.from_template(template)
         
         # Create React agent
         agent = create_react_agent(
@@ -492,7 +507,8 @@ class CrisisAgentWithTools:
             verbose=True,
             handle_parsing_errors=True,
             max_iterations=5,
-            max_execution_time=30
+            max_execution_time=30,
+            return_intermediate_steps=True
         )
         
         return agent_executor
